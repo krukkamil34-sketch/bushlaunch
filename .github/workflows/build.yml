@@ -4,6 +4,9 @@ on:
   push:
   workflow_dispatch:
 
+permissions:
+  contents: write
+
 jobs:
   build:
     runs-on: windows-latest
@@ -16,23 +19,38 @@ jobs:
           java-version: '21'
           cache: maven
 
-      - name: Build JAR
+      # Daje target/BushLaunch.exe - jeden plik, uruchamiany dwuklikiem (wymaga Javy 17+)
+      - name: Build BushLaunch.exe
         run: mvn -B package
 
-      - name: Przygotuj Jave do spakowania (pelny zestaw modulow)
+      # Dodatkowo instalator z wbudowana Java (dla osob bez Javy) - opcjonalny
+      - name: WiX (do instalatora)
+        continue-on-error: true
+        shell: pwsh
+        run: |
+          choco install wixtoolset --no-progress -y
+          "C:\Program Files (x86)\WiX Toolset v3.14\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+
+      - name: Zbuduj instalator z wbudowana Java
+        continue-on-error: true
         shell: pwsh
         run: |
           jlink --module-path "$env:JAVA_HOME\jmods" --add-modules ALL-MODULE-PATH --output runtime --strip-debug --no-header-files --no-man-pages --compress zip-6
-
-      - name: Zbuduj EXE (jpackage)
-        shell: pwsh
-        run: |
           New-Item -ItemType Directory -Force input | Out-Null
           Copy-Item target\BushLaunch-0.2.0.jar input\
-          jpackage --type app-image --name BushLaunch --app-version 0.2.0 --vendor BushStar --input input --main-jar BushLaunch-0.2.0.jar --main-class pl.bushstar.bushlaunch.BushLaunch --runtime-image runtime --dest dist
-          Compress-Archive -Path dist\BushLaunch -DestinationPath BushLaunch-windows.zip
+          jpackage --type exe --name BushLaunch --app-version 0.2.0 --vendor BushStar --input input --main-jar BushLaunch-0.2.0.jar --main-class pl.bushstar.bushlaunch.BushLaunch --runtime-image runtime --win-shortcut --win-menu --win-per-user-install --dest dist
+          Move-Item dist\BushLaunch-0.2.0.exe dist\BushLaunch-Setup.exe
+
+      - name: Wystaw pliki w Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest
+          name: BushLaunch (najnowsza wersja)
+          files: |
+            target/BushLaunch.exe
+            dist/BushLaunch-Setup.exe
 
       - uses: actions/upload-artifact@v4
         with:
-          name: BushLaunch-windows
-          path: BushLaunch-windows.zip
+          name: BushLaunch-exe
+          path: target/BushLaunch.exe

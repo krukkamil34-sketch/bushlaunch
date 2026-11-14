@@ -9,24 +9,25 @@ Launcher Minecraft by BushStar (Java, Swing).
 - tryb offline (sam nick, bez logowania Microsoft)
 - ustawienie RAM-u, pasek postępu, log gry w oknie
 - dane w `%APPDATA%\.bushlaunch` (gra, wersje, biblioteki, assets, `config.properties`)
-- sam dobiera Javę do wersji gry (szuka zainstalowanej, w razie braku używa wbudowanej)
+- sam dobiera Javę do wersji gry
 
 Nie obsługuje jeszcze: logowania Microsoft (serwery premium), modów/Forge/Fabric, skinów.
 
 ## Pobieranie (Windows)
 
-1. Wejdź w zakładkę **Actions** na GitHubie i otwórz ostatni udany build.
-2. Pobierz artefakt **BushLaunch-windows** i rozpakuj go.
-3. Uruchom `BushLaunch.exe` (Java jest w środku, nie trzeba jej instalować).
+Wejdź w **Releases** na GitHubie (prawa strona repozytorium):
+
+- `BushLaunch.exe` - jeden plik, uruchamiasz dwuklikiem. Wymaga zainstalowanej Javy 17 lub nowszej
+  (jeśli jej nie ma, wyskoczy komunikat z linkiem do pobrania).
+- `BushLaunch-Setup.exe` - instalator z wbudowaną Javą, dla osób bez Javy.
 
 ## Budowanie lokalnie
 
 ```
 mvn package
-java -jar target/BushLaunch-0.2.0.jar
 ```
 
-Wymagana Java 17+ i Maven.
+Powstaje `target/BushLaunch-0.2.0.jar` oraz `target/BushLaunch.exe`. Wymagana Java 17+ i Maven.
 
 ## Struktura
 
@@ -34,4 +35,4 @@ Wymagana Java 17+ i Maven.
 - `GameInstaller.java` - pobieranie plików gry i budowa komendy uruchomienia
 - `JavaFinder.java` - wybór Javy dla danej wersji
 - `Json.java` - mały parser JSON
-- `.github/workflows/build.yml` - build `.exe` na Windowsie (jlink + jpackage)
+- `.github/workflows/build.yml` - build na Windowsie i publikacja w Releases
