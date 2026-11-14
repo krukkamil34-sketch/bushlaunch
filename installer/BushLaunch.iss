@@ -61,8 +61,15 @@ Name: "{autodesktop}\{#AppName}"; Filename: "{app}\{#AppExe}"; Tasks: desktopico
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
+; Po cichej aktualizacji z launchera (parametr /RELAUNCH=1) otwórz launcher ponownie
+Filename: "{app}\{#AppExe}"; Flags: nowait runasoriginaluser; Check: IsRelaunch
 
 [Code]
+function IsRelaunch: Boolean;
+begin
+  Result := ExpandConstant('{param:RELAUNCH|0}') = '1';
+end;
+
 // Przy odinstalowaniu pytamy, czy skasować też dane w %APPDATA%\.bushlaunch (domyślnie: zostaw).
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 var

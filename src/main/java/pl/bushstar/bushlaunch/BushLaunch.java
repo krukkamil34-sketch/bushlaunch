@@ -287,6 +287,9 @@ public class BushLaunch {
         refreshStats();
         loadSkinAsync();
         loadVersions();
+        if (Boolean.parseBoolean(config.getProperty("autoUpdate", "true"))) {
+            checkForUpdates(false);
+        }
     }
 
     /** Składa całe UI (bez okna) - osobno, żeby dało się je też wyrenderować do obrazka. */
@@ -2071,7 +2074,7 @@ public class BushLaunch {
 
     private void openSettings() {
         JPanel body = new JPanel(new BorderLayout(0, 12));
-        JDialog d = makeDialog("Ustawienia", body, 440, 340);
+        JDialog d = makeDialog("Ustawienia", body, 440, 430);
 
         int maxRam = 8192;
         try {
@@ -2096,19 +2099,37 @@ public class BushLaunch {
         ramBox.add(ramLabel, BorderLayout.NORTH);
         ramBox.add(slider, BorderLayout.CENTER);
 
+        JCheckBox autoUpd = new JCheckBox("Automatycznie sprawdzaj aktualizacje",
+                Boolean.parseBoolean(config.getProperty("autoUpdate", "true")));
+        autoUpd.setOpaque(false);
+        autoUpd.setForeground(TEXT);
+        autoUpd.setFocusPainted(false);
+        autoUpd.setFont(body(Font.PLAIN, 14));
+        JPanel top = new JPanel(new BorderLayout(0, 10));
+        top.setOpaque(false);
+        top.add(ramBox, BorderLayout.CENTER);
+        top.add(autoUpd, BorderLayout.SOUTH);
+
         FlatButton openGame = new FlatButton("Otwórz folder gry", false);
         openGame.addActionListener(e -> openFolder(installer.gameDir()));
         FlatButton openBase = new FlatButton("Otwórz folder launchera", false);
         openBase.addActionListener(e -> openFolder(baseDir));
-        JPanel links = new JPanel(new GridLayout(2, 1, 0, 8));
+        FlatButton checkUpd = new FlatButton("Sprawdź aktualizacje (v" + LAUNCHER_VERSION + ")", false);
+        checkUpd.addActionListener(e -> {
+            d.dispose();
+            checkForUpdates(true);
+        });
+        JPanel links = new JPanel(new GridLayout(3, 1, 0, 8));
         links.setOpaque(false);
         links.add(openGame);
         links.add(openBase);
+        links.add(checkUpd);
 
         FlatButton save = new FlatButton("Zapisz", true);
         save.addActionListener(e -> {
             ramMb = snap(slider.getValue());
             config.setProperty("ram", String.valueOf(ramMb));
+            config.setProperty("autoUpdate", String.valueOf(autoUpd.isSelected()));
             saveConfig();
             hero.repaint();
             d.dispose();
@@ -2117,7 +2138,7 @@ public class BushLaunch {
         south.setOpaque(false);
         south.add(save, BorderLayout.EAST);
 
-        body.add(ramBox, BorderLayout.NORTH);
+        body.add(top, BorderLayout.NORTH);
         body.add(links, BorderLayout.CENTER);
         body.add(south, BorderLayout.SOUTH);
         d.setVisible(true);
@@ -2162,6 +2183,171 @@ public class BushLaunch {
         public void paintFocus(Graphics g) {
             // bez ramki fokusu
         }
+    }
+
+    // ------------------------------------------------------------------ aktualizacje
+
+    /** Sprawdza w tle, czy jest nowa wersja launchera. manual = true: pokaż też wynik "masz najnowszą". */
+    private void checkForUpdates(boolean manual) {
+        if (!Updater.enabled()) {
+            if (manual) {
+                notice("Aktualizacje", "Ta wersja launchera nie ma włączonych aktualizacji (build lokalny).");
+            }
+            return;
+        }
+        Thread t = new Thread(() -> {
+            try {
+                Updater.Info info = Updater.check(LAUNCHER_VERSION);
+                if (info == null) {
+                    appendLog("Aktualizacje: masz najnowszą wersję (" + LAUNCHER_VERSION + ").");
+                    if (manual) {
+                        SwingUtilities.invokeLater(() -> notice("Aktualizacje",
+                                "Masz najnowszą wersję launchera (v" + LAUNCHER_VERSION + ")."));
+                    }
+                    return;
+                }
+                appendLog("Aktualizacje: dostępna wersja " + info.version() + ".");
+                if (!manual && info.version().equals(config.getProperty("skipVersion"))) {
+                    return;
+                }
+                SwingUtilities.invokeLater(() -> openUpdateDialog(info));
+            } catch (Exception e) {
+                appendLog("Aktualizacje: nie udało się sprawdzić (" + e.getMessage() + ").");
+                if (manual) {
+                    SwingUtilities.invokeLater(() -> notice("Aktualizacje",
+                            "Nie udało się sprawdzić aktualizacji. Sprawdź połączenie z internetem."));
+                }
+            }
+        }, "check-update");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    private void notice(String title, String text) {
+        JPanel body = new JPanel(new BorderLayout(0, 16));
+        JDialog d = makeDialog(title, body, 420, 190);
+        JLabel l = new JLabel("<html><body style='width:340px'>" + escape(text) + "</body></html>");
+        l.setForeground(TEXT);
+        l.setFont(body(Font.PLAIN, 14));
+        FlatButton ok = new FlatButton("OK", true);
+        ok.addActionListener(e -> d.dispose());
+        JPanel south = new JPanel(new BorderLayout());
+        south.setOpaque(false);
+        south.add(ok, BorderLayout.EAST);
+        body.add(l, BorderLayout.CENTER);
+        body.add(south, BorderLayout.SOUTH);
+        d.setVisible(true);
+    }
+
+    private void openUpdateDialog(Updater.Info info) {
+        JPanel body = new JPanel(new BorderLayout(0, 12));
+        JDialog d = makeDialog("Dostępna aktualizacja", body, 480, 330);
+
+        JLabel head = new JLabel("BushLaunch " + info.version());
+        head.setForeground(TEXT);
+        head.setFont(head(Font.BOLD, 24));
+        String notes = info.notes().isBlank() ? "Nowa wersja launchera jest gotowa do instalacji." : info.notes();
+        JLabel sub = new JLabel("<html><body style='width:400px'>Masz wersję " + LAUNCHER_VERSION + ".<br><br>"
+                + escape(notes).replace("\n", "<br>") + "</body></html>");
+        sub.setForeground(MUTED);
+        sub.setFont(body(Font.PLAIN, 14));
+        sub.setVerticalAlignment(JLabel.TOP);
+
+        final double[] frac = {0};
+        JComponent bar = new JComponent() {
+            @Override
+            protected void paintComponent(Graphics g0) {
+                Graphics2D g = (Graphics2D) g0.create();
+                aa(g);
+                g.setColor(BORDER);
+                g.fill(new RoundRectangle2D.Double(0, 5, getWidth(), 8, 8, 8));
+                g.setPaint(new GradientPaint(0, 0, ACCENT, getWidth(), 0, ACCENT_HI));
+                g.fill(new RoundRectangle2D.Double(0, 5, Math.max(0, getWidth() * frac[0]), 8, 8, 8));
+                g.dispose();
+            }
+        };
+        bar.setPreferredSize(new Dimension(10, 18));
+        bar.setVisible(false);
+        JLabel status = new JLabel(" ");
+        status.setForeground(MUTED);
+        status.setFont(body(Font.PLAIN, 12));
+
+        FlatButton go = new FlatButton("Aktualizuj teraz", true);
+        FlatButton later = new FlatButton("Później", false);
+        FlatButton skip = new FlatButton("Pomiń tę wersję", false);
+        later.addActionListener(e -> d.dispose());
+        skip.addActionListener(e -> {
+            config.setProperty("skipVersion", info.version());
+            saveConfig();
+            d.dispose();
+        });
+        go.addActionListener(e -> {
+            if (busy || gameRunning) {
+                status.setForeground(new Color(0xFF6B5A));
+                status.setText("Poczekaj, aż skończy się pobieranie lub gra.");
+                return;
+            }
+            if (!Updater.isInstalled()) {
+                openUrl(Updater.releasePage());
+                d.dispose();
+                return;
+            }
+            go.setEnabled(false);
+            later.setEnabled(false);
+            skip.setEnabled(false);
+            bar.setVisible(true);
+            status.setForeground(MUTED);
+            status.setText("Pobieranie...");
+            Thread t = new Thread(() -> {
+                try {
+                    java.nio.file.Path setup = Updater.download(info, (done, total) -> SwingUtilities.invokeLater(() -> {
+                        frac[0] = total > 0 ? Math.min(1.0, done / (double) total) : 0;
+                        status.setText(total > 0 ? "Pobieranie... " + (int) (frac[0] * 100) + "%" : "Pobieranie...");
+                        bar.repaint();
+                    }));
+                    SwingUtilities.invokeLater(() -> status.setText("Instalowanie - launcher uruchomi się ponownie..."));
+                    appendLog("Aktualizacje: uruchamiam instalator " + info.version());
+                    Updater.installAndExit(setup);
+                } catch (Exception ex) {
+                    appendLog("Aktualizacje: błąd - " + ex.getMessage());
+                    SwingUtilities.invokeLater(() -> {
+                        status.setForeground(new Color(0xFF6B5A));
+                        status.setText("Błąd: " + ex.getMessage());
+                        go.setEnabled(true);
+                        later.setEnabled(true);
+                        skip.setEnabled(true);
+                    });
+                }
+            }, "download-update");
+            t.setDaemon(true);
+            t.start();
+        });
+
+        JPanel center = new JPanel(new BorderLayout(0, 10));
+        center.setOpaque(false);
+        JPanel headBox = new JPanel(new BorderLayout());
+        headBox.setOpaque(false);
+        headBox.add(head, BorderLayout.NORTH);
+        center.add(headBox, BorderLayout.NORTH);
+        center.add(sub, BorderLayout.CENTER);
+        JPanel prog = new JPanel(new BorderLayout(0, 4));
+        prog.setOpaque(false);
+        prog.add(bar, BorderLayout.NORTH);
+        prog.add(status, BorderLayout.SOUTH);
+        center.add(prog, BorderLayout.SOUTH);
+
+        JPanel buttons = new JPanel(new BorderLayout());
+        buttons.setOpaque(false);
+        buttons.add(skip, BorderLayout.WEST);
+        JPanel right = new JPanel(new GridLayout(1, 2, 8, 0));
+        right.setOpaque(false);
+        right.add(later);
+        right.add(go);
+        buttons.add(right, BorderLayout.EAST);
+
+        body.add(center, BorderLayout.CENTER);
+        body.add(buttons, BorderLayout.SOUTH);
+        d.setVisible(true);
     }
 
     // ------------------------------------------------------------------ wersje i uruchamianie

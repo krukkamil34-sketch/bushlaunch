@@ -26,6 +26,13 @@ jobs:
           $v = $pom.project.version
           "APP_VERSION=$v" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
 
+      # Adres aktualizacji wbudowany w jar (z nazwy tego repozytorium) - launcher sprawdza latest.json w Releases
+      - name: Adres aktualizacji
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force src\main\resources | Out-Null
+          "url=https://github.com/${{ github.repository }}/releases/download/latest/latest.json" | Out-File -Encoding ascii src\main\resources\update.properties
+
       # target/BushLaunch.exe - jeden plik, uruchamiany dwuklikiem (wymaga Javy 17+)
       - name: Build BushLaunch.exe (jar + launch4j)
         run: mvn -B package
@@ -61,6 +68,21 @@ jobs:
           & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$env:APP_VERSION" installer\BushLaunch.iss
           if (-not (Test-Path dist\BushLaunch-Setup.exe)) { throw "Brak dist\BushLaunch-Setup.exe" }
 
+      # latest.json: wersja + link + SHA-256 instalatora; z niego korzystają automatyczne aktualizacje
+      - name: Zbuduj latest.json
+        shell: pwsh
+        run: |
+          $hash = (Get-FileHash dist\BushLaunch-Setup.exe -Algorithm SHA256).Hash.ToLower()
+          $notes = (git log -1 --pretty=%s)
+          $json = [ordered]@{
+            version = $env:APP_VERSION
+            url     = "https://github.com/${{ github.repository }}/releases/download/latest/BushLaunch-Setup.exe"
+            sha256  = $hash
+            notes   = $notes
+          } | ConvertTo-Json
+          [System.IO.File]::WriteAllText("$PWD\dist\latest.json", $json, (New-Object System.Text.UTF8Encoding($false)))
+          Get-Content dist\latest.json
+
       # Wersja przenośna bez instalacji (rozpakuj i uruchom)
       - name: Wersja przenośna (zip)
         shell: pwsh
@@ -74,6 +96,7 @@ jobs:
           files: |
             dist/BushLaunch-Setup.exe
             dist/BushLaunch-Portable.zip
+            dist/latest.json
             target/BushLaunch.exe
 
       - uses: actions/upload-artifact@v4

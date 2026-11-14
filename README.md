@@ -26,6 +26,19 @@ Wejdź w **Releases** na GitHubie (prawa strona repozytorium):
 - `BushLaunch.exe` - jeden mały plik, wymaga zainstalowanej Javy 17 lub nowszej
   (jeśli jej nie ma, wyskoczy komunikat z linkiem do pobrania).
 
+## Automatyczne aktualizacje
+
+Zainstalowany launcher przy starcie sprawdza plik `latest.json` w Releases. Gdy jest nowsza wersja,
+pokazuje okno z opisem i przyciskiem **Aktualizuj teraz**: pobiera instalator, sprawdza sumę SHA-256,
+instaluje po cichu (w tym samym trybie i folderze co poprzednio) i sam się uruchamia ponownie.
+Można też wybrać „Pomiń tę wersję” albo wyłączyć sprawdzanie w Ustawieniach (jest tam też ręczne
+„Sprawdź aktualizacje”). Wersja przenośna i sam `BushLaunch.exe` nie aktualizują się same - przy
+nowej wersji otwierają stronę pobierania.
+
+Żeby wydać aktualizację: **podnieś `<version>` w `pom.xml`** (np. 0.3.1) i zrób push - workflow zbuduje
+instalator i `latest.json`. Bez zmiany numeru wersji launchery nie zobaczą aktualizacji.
+Adres aktualizacji wstawia workflow (z nazwy repozytorium); w buildzie lokalnym aktualizacje są wyłączone.
+
 ## Budowanie lokalnie
 
 ```
@@ -50,6 +63,7 @@ Wynik: `dist/BushLaunch-Setup.exe`. Na GitHubie robi to samo `.github/workflows/
 
 - `BushLaunch.java` - okno launchera
 - `GameInstaller.java` - pobieranie plików gry i budowa komendy uruchomienia
+- `Updater.java` - automatyczne aktualizacje (latest.json, pobieranie, SHA-256, cichy instalator)
 - `JavaFinder.java` - wybór Javy dla danej wersji
 - `Json.java` - mały parser JSON
 - `installer/` - skrypt instalatora (`BushLaunch.iss`), ikona i grafiki kreatora
