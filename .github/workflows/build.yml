@@ -33,6 +33,14 @@ jobs:
           New-Item -ItemType Directory -Force src\main\resources | Out-Null
           "url=https://github.com/${{ github.repository }}/releases/download/latest/latest.json" | Out-File -Encoding ascii src\main\resources\update.properties
 
+      # Client ID aplikacji Microsoft (logowanie premium). Ustaw w repozytorium:
+      # Settings > Secrets and variables > Actions > Variables > New variable: MS_CLIENT_ID
+      - name: ID aplikacji Microsoft
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force src\main\resources | Out-Null
+          "clientId=${{ vars.MS_CLIENT_ID }}" | Out-File -Encoding ascii src\main\resources\auth.properties
+
       # target/BushLaunch.exe - jeden plik, uruchamiany dwuklikiem (wymaga Javy 17+)
       - name: Build BushLaunch.exe (jar + launch4j)
         run: mvn -B package

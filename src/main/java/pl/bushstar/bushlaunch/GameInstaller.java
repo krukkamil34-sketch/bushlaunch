@@ -53,6 +53,13 @@ public final class GameInstaller {
                            List<String> jvmArgs, List<String> gameArgs, Path nativesDir) {
     }
 
+    /** Dane sesji przekazywane grze: nick, UUID i token (offline: "0"; Microsoft: token Minecraft, typ "msa"). */
+    public record Session(String name, String uuid, String accessToken, String userType) {
+        public static Session offline(String name) {
+            return new Session(name, offlineUuid(name), "0", "legacy");
+        }
+    }
+
     private record Task(String url, Path target, long size) {
     }
 
@@ -274,20 +281,25 @@ public final class GameInstaller {
     // ------------------------------------------------------------------ komenda uruchomienia
 
     public List<String> buildCommand(Prepared p, Path javaExe, String username, int ramMb) throws IOException {
+        return buildCommand(p, javaExe, Session.offline(username), ramMb);
+    }
+
+    public List<String> buildCommand(Prepared p, Path javaExe, Session session, int ramMb) throws IOException {
         Files.createDirectories(gameDir);
+        boolean online = "msa".equals(session.userType());
         Map<String, String> vars = new HashMap<>();
-        vars.put("auth_player_name", username);
+        vars.put("auth_player_name", session.name());
         vars.put("version_name", p.versionId());
         vars.put("game_directory", gameDir.toString());
         vars.put("assets_root", p.assetsRoot().toString());
         vars.put("game_assets", p.gameAssets().toString());
         vars.put("assets_index_name", p.assetsIndex());
-        vars.put("auth_uuid", offlineUuid(username));
-        vars.put("auth_access_token", "0");
-        vars.put("auth_session", "0");
+        vars.put("auth_uuid", session.uuid());
+        vars.put("auth_access_token", session.accessToken());
+        vars.put("auth_session", online ? "token:" + session.accessToken() + ":" + session.uuid() : "0");
         vars.put("auth_xuid", "0");
         vars.put("clientid", "0");
-        vars.put("user_type", "legacy");
+        vars.put("user_type", session.userType());
         vars.put("user_properties", "{}");
         vars.put("version_type", p.versionType() == null ? "release" : p.versionType());
         vars.put("natives_directory", p.nativesDir().toString());
