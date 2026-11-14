@@ -1,0 +1,39 @@
+name: Build BushLaunch (Windows EXE)
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+          cache: maven
+
+      - name: Build JAR
+        run: mvn -B package
+
+      - name: Build EXE (jpackage, z wbudowana Java)
+        shell: pwsh
+        run: |
+          jpackage `
+            --type app-image `
+            --name BushLaunch `
+            --app-version 0.1.0 `
+            --vendor BushStar `
+            --input target `
+            --main-jar BushLaunch-0.1.0.jar `
+            --main-class pl.bushstar.bushlaunch.BushLaunch `
+            --dest dist
+          Compress-Archive -Path dist\BushLaunch -DestinationPath BushLaunch-windows.zip
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: BushLaunch-windows
+          path: BushLaunch-windows.zip

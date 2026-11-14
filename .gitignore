@@ -1,0 +1,26 @@
+# Maven
+target/
+dependency-reduced-pom.xml
+
+# Zbudowane pliki
+*.jar
+*.exe
+dist/
+BushLaunch-windows.zip
+
+# Java
+*.class
+hs_err_pid*.log
+
+# IDE
+.idea/
+*.iml
+.vscode/
+.classpath
+.project
+.settings/
+*.swp
+
+# System
+.DS_Store
+Thumbs.db
