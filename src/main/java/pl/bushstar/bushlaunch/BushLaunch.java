@@ -41,7 +41,9 @@ import java.awt.GradientPaint;
 import java.awt.Graphics;
 import java.awt.Graphics2D;
 import java.awt.GraphicsEnvironment;
+import java.awt.FlowLayout;
 import java.awt.GridLayout;
+import java.awt.Point;
 import java.awt.Polygon;
 import java.awt.Rectangle;
 import java.awt.RadialGradientPaint;
@@ -76,6 +78,7 @@ import java.util.Map;
 import java.util.Properties;
 import java.util.Random;
 import java.util.Set;
+import java.util.function.Consumer;
 import java.util.stream.Stream;
 
 /**
@@ -85,7 +88,7 @@ import java.util.stream.Stream;
  */
 public class BushLaunch {
 
-    public static final String LAUNCHER_VERSION = "0.3.0";
+    public static final String LAUNCHER_VERSION = "0.4.0";
 
     /** Link do Discorda BushStar - podmień na swój zaproszeniowy. */
     private static final String DISCORD_URL = "https://discord.gg/";
@@ -131,6 +134,19 @@ public class BushLaunch {
         g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
         g.setRenderingHint(RenderingHints.KEY_TEXT_ANTIALIASING, RenderingHints.VALUE_TEXT_ANTIALIAS_ON);
         g.setRenderingHint(RenderingHints.KEY_STROKE_CONTROL, RenderingHints.VALUE_STROKE_PURE);
+    }
+
+    /** Skraca tekst (z wielokropkiem), żeby zmieścił się w danej szerokości przy aktualnej czcionce g. */
+    static String fit(Graphics2D g, String text, int maxW) {
+        FontMetrics fm = g.getFontMetrics();
+        if (text == null || fm.stringWidth(text) <= maxW) {
+            return text;
+        }
+        String t = text;
+        while (t.length() > 1 && fm.stringWidth(t + "\u2026") > maxW) {
+            t = t.substring(0, t.length() - 1);
+        }
+        return t.trim() + "\u2026";
     }
 
     static Color alpha(Color c, int a) {
@@ -200,6 +216,9 @@ public class BushLaunch {
     private GameInstaller installer;
     private List<VersionEntry> allVersions = new ArrayList<>();
     private VersionEntry selected;
+    private final List<Profile> profiles = new ArrayList<>();
+    private final Map<String, VersionEntry> versionIndex = new LinkedHashMap<>();
+    private String activeProfileId = "";
     private String nick = "";
     private int ramMb = 2048;
     private boolean showAll;
@@ -226,6 +245,20 @@ public class BushLaunch {
     private JLabel modsInfo;
     private Component sidebarUser;
 
+    /** Profil gracza: nazwa + wersja gry. Zapisywany w config.properties. */
+    private static final class Profile {
+        final String id;
+        String name;
+        String version;
+        long used;
+
+        Profile(String id, String name, String version) {
+            this.id = id;
+            this.name = name;
+            this.version = version;
+        }
+    }
+
     public static void main(String[] args) {
         System.setProperty("awt.useSystemAAFontSettings", "on");
         System.setProperty("swing.aatext", "true");
@@ -251,6 +284,7 @@ public class BushLaunch {
         } catch (NumberFormatException ignored) {
             ramMb = 2048;
         }
+        loadProfiles();
 
         frame = new JFrame("BushLaunch");
         frame.setUndecorated(true);
@@ -645,7 +679,8 @@ public class BushLaunch {
         col.setPreferredSize(new Dimension(300, 10));
 
         InfoCard news = new InfoCard("Nowości", 10, new String[][]{
-                {"v" + LAUNCHER_VERSION, "Nowy wygląd i instalator Windows"},
+                {"v" + LAUNCHER_VERSION, "Profile z własną wersją gry"},
+                {"Profile", "Własne profile i zmiana ich wersji gry"},
                 {"Wersje", "Wszystkie wydania i snapshoty Mojang"},
                 {"Offline", "Wystarczy nick, bez logowania"},
                 {"Wkrótce", "Logowanie Microsoft, Fabric i Forge"}});
@@ -912,19 +947,21 @@ public class BushLaunch {
             g.setPaint(new GradientPaint(0, verRect.y, hoverVer ? new Color(0x3A2518) : new Color(0x2C1B12),
                     0, verRect.y + verRect.height, new Color(0x201410)));
             g.fill(cut(verRect.x, verRect.y, verRect.width, verRect.height, 10));
-            String vid = selected == null ? "Wybierz wersję" : selected.id();
-            String vsub = selected == null ? (loadingVersions ? "Wczytywanie..." : "Brak wersji")
-                    : typeLabel(selected.type());
+            Profile ap = activeProfile();
+            String vid = ap != null ? ap.name : "Brak profilu";
+            String vsub = selected == null ? (loadingVersions ? "Wczytywanie..." : "Wybierz wersję")
+                    : selected.id() + "  \u00b7  " + typeLabel(selected.type());
             if (selected != null) {
                 drawBlock(g, verRect.x + 10, verRect.y + 12, 40, selected.id().hashCode());
             }
             int textX = verRect.x + (selected != null ? 60 : 14);
+            int textMax = verRect.x + verRect.width - 34 - textX;
             g.setFont(head(Font.BOLD, 19));
             g.setColor(TEXT);
-            g.drawString(vid, textX, verRect.y + 28);
+            g.drawString(fit(g, vid, textMax), textX, verRect.y + 28);
             g.setFont(body(Font.PLAIN, 13));
             g.setColor(MUTED);
-            g.drawString(vsub, textX, verRect.y + 48);
+            g.drawString(fit(g, vsub, textMax), textX, verRect.y + 48);
             g.setColor(MUTED);
             g.setStroke(new BasicStroke(1.8f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
             int cx = verRect.x + verRect.width - 20;
@@ -1377,15 +1414,48 @@ public class BushLaunch {
     }
 
     private final class ProfileCard extends Clickable {
-        private final VersionEntry v;
+        private final Profile p;
+        private final boolean editable;
+        private final Rectangle editRect = new Rectangle();
+        private boolean hoverEdit;
+        private Point pressed;
 
-        ProfileCard(VersionEntry v) {
+        ProfileCard(Profile p, boolean editable) {
             super(null);
-            this.v = v;
+            this.p = p;
+            this.editable = editable;
             this.onClick = () -> {
-                selectVersion(v);
-                showPage("home");
+                if (this.editable && pressed != null && editRect.contains(pressed)) {
+                    openProfileEditor(this.p);
+                } else {
+                    selectProfile(this.p);
+                    showPage("home");
+                }
             };
+            addMouseListener(new MouseAdapter() {
+                @Override
+                public void mousePressed(MouseEvent e) {
+                    pressed = e.getPoint();
+                }
+
+                @Override
+                public void mouseExited(MouseEvent e) {
+                    if (hoverEdit) {
+                        hoverEdit = false;
+                        repaint();
+                    }
+                }
+            });
+            addMouseMotionListener(new MouseAdapter() {
+                @Override
+                public void mouseMoved(MouseEvent e) {
+                    boolean h = ProfileCard.this.editable && editRect.contains(e.getPoint());
+                    if (h != hoverEdit) {
+                        hoverEdit = h;
+                        repaint();
+                    }
+                }
+            });
             setPreferredSize(new Dimension(220, 76));
         }
 
@@ -1393,7 +1463,7 @@ public class BushLaunch {
         protected void paintComponent(Graphics g0) {
             Graphics2D g = (Graphics2D) g0.create();
             aa(g);
-            boolean sel = selected != null && selected.id().equals(v.id());
+            boolean sel = p.id.equals(activeProfileId);
             card(g, 0, 0, getWidth(), getHeight(), 18, sel || hover);
             if (sel) {
                 g.setColor(ACCENT);
@@ -1401,56 +1471,176 @@ public class BushLaunch {
                 g.draw(cut(0.8, 0.8, getWidth() - 1.6, getHeight() - 1.6, 18));
                 g.setFont(body(Font.BOLD, 10));
                 g.setColor(ACCENT_HI);
-                String tag = "WYBRANA";
+                String tag = "AKTYWNY";
                 g.drawString(tag, getWidth() - 14 - g.getFontMetrics().stringWidth(tag), getHeight() - 12);
             }
-            drawBlock(g, 14, 16, 44, v.id().hashCode());
+            String ver = p.version == null || p.version.isBlank() ? "-" : p.version;
+            drawBlock(g, 14, 16, 44, ver.hashCode());
+
+            int nameMax = getWidth() - 72 - (editable ? 46 : 14);
             g.setColor(TEXT);
-            g.setFont(head(Font.BOLD, 22));
-            g.drawString(v.id(), 72, 40);
+            g.setFont(head(Font.BOLD, 20));
+            g.drawString(fit(g, p.name, nameMax), 72, 38);
+
+            VersionEntry v = p.version == null || p.version.isBlank() ? null : resolveVersion(p.version);
+            String sub = ver + (v != null && v.type() != null ? "  \u00b7  " + typeLabel(v.type()) : "");
             g.setColor(MUTED);
             g.setFont(body(Font.PLAIN, 13));
-            g.drawString(typeLabel(v.type()), 72, 60);
+            g.drawString(fit(g, sub, getWidth() - 72 - (sel ? 82 : 14)), 72, 60);
+
+            if (editable) {
+                editRect.setBounds(getWidth() - 42, 8, 32, 30);
+                if (hoverEdit) {
+                    g.setColor(alpha(ACCENT, 60));
+                    g.fill(new RoundRectangle2D.Double(editRect.x, editRect.y, editRect.width, editRect.height, 10, 10));
+                }
+                icon(g, 7, editRect.x + 7, editRect.y + 6, 18, hoverEdit ? TEXT : MUTED);
+            }
             g.dispose();
         }
     }
 
-    private void selectVersion(VersionEntry v) {
-        selected = v;
-        config.setProperty("version", v.id());
-        config.setProperty("showAll", String.valueOf(showAll));
+    // ------------------------------------------------------------------ profile (dane)
+
+    private Profile activeProfile() {
+        for (Profile p : profiles) {
+            if (p.id.equals(activeProfileId)) {
+                return p;
+            }
+        }
+        return null;
+    }
+
+    private VersionEntry resolveVersion(String id) {
+        VersionEntry v = versionIndex.get(id);
+        return v != null ? v : new VersionEntry(id, null, null);
+    }
+
+    private String newProfileId() {
+        Random rnd = new Random();
+        while (true) {
+            String id = Long.toString(System.currentTimeMillis(), 36) + Integer.toString(rnd.nextInt(1296), 36);
+            boolean taken = false;
+            for (Profile p : profiles) {
+                if (p.id.equals(id)) {
+                    taken = true;
+                    break;
+                }
+            }
+            if (!taken) {
+                return id;
+            }
+        }
+    }
+
+    private void loadProfiles() {
+        profiles.clear();
+        for (String raw : config.getProperty("profiles", "").split(",")) {
+            String id = raw.trim();
+            if (id.isEmpty()) {
+                continue;
+            }
+            String name = config.getProperty("profile." + id + ".name", "").trim();
+            if (name.isEmpty()) {
+                continue;
+            }
+            Profile p = new Profile(id, name, config.getProperty("profile." + id + ".version", ""));
+            try {
+                p.used = Long.parseLong(config.getProperty("profile." + id + ".used", "0"));
+            } catch (NumberFormatException ignored) {
+                p.used = 0;
+            }
+            profiles.add(p);
+        }
+        if (profiles.isEmpty()) {
+            // pierwsze uruchomienie z profilami: przenosimy dotychczas wybraną wersję do profilu "Domyślny"
+            profiles.add(new Profile(newProfileId(), "Domyślny", config.getProperty("version", "")));
+        }
+        activeProfileId = config.getProperty("profile", "");
+        if (activeProfile() == null) {
+            activeProfileId = profiles.get(0).id;
+        }
+        saveProfiles();
+    }
+
+    private void saveProfiles() {
+        for (String k : new ArrayList<>(config.stringPropertyNames())) {
+            if (k.startsWith("profile.")) {
+                config.remove(k);
+            }
+        }
+        StringBuilder ids = new StringBuilder();
+        for (Profile p : profiles) {
+            if (ids.length() > 0) {
+                ids.append(',');
+            }
+            ids.append(p.id);
+            config.setProperty("profile." + p.id + ".name", p.name);
+            config.setProperty("profile." + p.id + ".version", p.version == null ? "" : p.version);
+            config.setProperty("profile." + p.id + ".used", String.valueOf(p.used));
+        }
+        config.setProperty("profiles", ids.toString());
+        config.setProperty("profile", activeProfileId == null ? "" : activeProfileId);
         saveConfig();
+    }
+
+    /** Przelicza wybraną wersję z aktywnego profilu i odświeża wszystkie widoki. */
+    private void applyActive() {
+        Profile p = activeProfile();
+        selected = p == null || p.version == null || p.version.isBlank() ? null : resolveVersion(p.version);
         refreshRecent();
+        refreshProfiles();
         if (hero != null) {
             hero.repaint();
         }
     }
 
-    private List<VersionEntry> installedList() {
-        List<VersionEntry> list = new ArrayList<>();
-        try {
-            if (installer != null) {
-                list.addAll(installer.installedVersions());
-            }
-        } catch (Exception ignored) {
-            // brak zainstalowanych wersji
+    private void selectProfile(Profile p) {
+        activeProfileId = p.id;
+        saveProfiles();
+        applyActive();
+    }
+
+    private void setProfileVersion(Profile p, VersionEntry v) {
+        p.version = v.id();
+        saveProfiles();
+        applyActive();
+    }
+
+    private void deleteProfile(Profile p) {
+        if (profiles.size() <= 1) {
+            return;
         }
-        if (selected != null) {
-            list.removeIf(v -> v.id().equals(selected.id()));
-            list.add(0, selected);
+        profiles.remove(p);
+        if (p.id.equals(activeProfileId)) {
+            activeProfileId = profiles.get(0).id;
+        }
+        saveProfiles();
+        applyActive();
+    }
+
+    private List<Profile> recentProfiles() {
+        List<Profile> list = new ArrayList<>(profiles);
+        list.sort((a, b) -> Long.compare(b.used, a.used));
+        Profile ap = activeProfile();
+        if (ap != null) {
+            list.remove(ap);
+            list.add(0, ap);
         }
         return list;
     }
+
+    // ------------------------------------------------------------------ profile (widoki)
 
     private void refreshRecent() {
         if (recentCards == null) {
             return;
         }
         recentCards.removeAll();
-        List<VersionEntry> list = installedList();
+        List<Profile> list = recentProfiles();
         for (int i = 0; i < 3; i++) {
             if (i < list.size()) {
-                recentCards.add(new ProfileCard(list.get(i)));
+                recentCards.add(new ProfileCard(list.get(i), false));
             } else {
                 recentCards.add(new JLabel());
             }
@@ -1463,21 +1653,30 @@ public class BushLaunch {
         JPanel p = new JPanel(new BorderLayout(0, 18));
         p.setBackground(BG);
         p.setBorder(new EmptyBorder(26, 30, 26, 30));
-        p.add(pageTitle("Moje profile", "Zainstalowane i wybrane wersje gry. Kliknij, żeby wybrać."), BorderLayout.NORTH);
+        p.add(pageTitle("Moje profile",
+                "Każdy profil ma własną wersję gry. Kliknij kartę, żeby go wybrać, a ikonę suwaków, żeby edytować."),
+                BorderLayout.NORTH);
 
         profilesGrid = new JPanel(new GridLayout(0, 3, 16, 16));
         profilesGrid.setOpaque(false);
         JPanel wrap = new JPanel(new BorderLayout());
         wrap.setOpaque(false);
         wrap.add(profilesGrid, BorderLayout.NORTH);
+        JScrollPane scroll = darkScroll(wrap);
+        scroll.setBorder(new EmptyBorder(0, 0, 0, 0));
+        scroll.getViewport().setOpaque(false);
 
-        FlatButton pick = new FlatButton("Wybierz inną wersję", true);
+        FlatButton add = new FlatButton("+ Nowy profil", true);
+        add.addActionListener(e -> openProfileEditor(null));
+        FlatButton pick = new FlatButton("Zmień wersję aktywnego profilu", false);
         pick.addActionListener(e -> openVersionPicker());
-        JPanel south = new JPanel(new BorderLayout());
+        JPanel south = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
         south.setOpaque(false);
-        south.add(pick, BorderLayout.WEST);
+        south.add(add);
+        south.add(javax.swing.Box.createHorizontalStrut(12));
+        south.add(pick);
 
-        p.add(wrap, BorderLayout.CENTER);
+        p.add(scroll, BorderLayout.CENTER);
         p.add(south, BorderLayout.SOUTH);
         return p;
     }
@@ -1487,12 +1686,165 @@ public class BushLaunch {
             return;
         }
         profilesGrid.removeAll();
-        for (VersionEntry v : installedList()) {
-            profilesGrid.add(new ProfileCard(v));
+        for (Profile p : profiles) {
+            profilesGrid.add(new ProfileCard(p, true));
+        }
+        // puste komórki, żeby karty nie rozciągały się na całą szerokość przy 1-2 profilach
+        for (int i = profiles.size() % 3; i != 0 && i < 3; i++) {
+            profilesGrid.add(new JLabel());
         }
         profilesGrid.revalidate();
         profilesGrid.repaint();
     }
+
+    /** Okno tworzenia (existing == null) albo edycji profilu: nazwa i wersja gry. */
+    private void openProfileEditor(Profile existing) {
+        final String[] ver = {existing != null ? existing.version
+                : (selected != null ? selected.id() : null)};
+        JPanel body = new JPanel(new BorderLayout(0, 10));
+        JDialog d = makeDialog(existing == null ? "Nowy profil" : "Edytuj profil", body, 440, 330);
+
+        JLabel nameHint = new JLabel("Nazwa profilu");
+        nameHint.setForeground(MUTED);
+        nameHint.setFont(body(Font.PLAIN, 12));
+        JTextField name = field(existing != null ? existing.name : "Nowy profil");
+        name.setMaximumSize(new Dimension(Integer.MAX_VALUE, name.getPreferredSize().height));
+
+        JLabel verHint = new JLabel("Wersja gry");
+        verHint.setForeground(MUTED);
+        verHint.setFont(body(Font.PLAIN, 12));
+
+        Clickable verBox = new Clickable(null) {
+            @Override
+            protected void paintComponent(Graphics g0) {
+                Graphics2D g = (Graphics2D) g0.create();
+                aa(g);
+                card(g, 0, 0, getWidth(), getHeight(), 14, hover);
+                if (ver[0] == null) {
+                    g.setColor(MUTED);
+                    g.setFont(body(Font.PLAIN, 15));
+                    g.drawString("Kliknij, aby wybrać wersję", 16, getHeight() / 2 + 5);
+                } else {
+                    VersionEntry v = resolveVersion(ver[0]);
+                    drawBlock(g, 12, 12, 40, ver[0].hashCode());
+                    g.setFont(head(Font.BOLD, 20));
+                    g.setColor(TEXT);
+                    g.drawString(ver[0], 62, 32);
+                    g.setFont(body(Font.PLAIN, 13));
+                    g.setColor(MUTED);
+                    g.drawString(typeLabel(v.type()), 62, 50);
+                }
+                g.setColor(MUTED);
+                g.setStroke(new BasicStroke(1.8f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                int cx = getWidth() - 24;
+                int cy = getHeight() / 2;
+                g.drawLine(cx - 5, cy - 3, cx, cy + 2);
+                g.drawLine(cx, cy + 2, cx + 5, cy - 3);
+                g.dispose();
+            }
+        };
+        verBox.setPreferredSize(new Dimension(10, 64));
+        verBox.setMaximumSize(new Dimension(Integer.MAX_VALUE, 64));
+        verBox.onClick = () -> openVersionPicker(ver[0] == null ? null : resolveVersion(ver[0]), v -> {
+            ver[0] = v.id();
+            verBox.repaint();
+        });
+
+        JLabel err = new JLabel(" ");
+        err.setForeground(new Color(0xFF6B5A));
+        err.setFont(body(Font.PLAIN, 12));
+
+        JPanel mid = new JPanel();
+        mid.setOpaque(false);
+        mid.setLayout(new BoxLayout(mid, BoxLayout.Y_AXIS));
+        for (JComponent c : new JComponent[]{nameHint, name, verHint, verBox, err}) {
+            c.setAlignmentX(Component.LEFT_ALIGNMENT);
+        }
+        mid.add(nameHint);
+        mid.add(javax.swing.Box.createVerticalStrut(4));
+        mid.add(name);
+        mid.add(javax.swing.Box.createVerticalStrut(14));
+        mid.add(verHint);
+        mid.add(javax.swing.Box.createVerticalStrut(4));
+        mid.add(verBox);
+        mid.add(javax.swing.Box.createVerticalStrut(8));
+        mid.add(err);
+
+        FlatButton save = new FlatButton("Zapisz", true);
+        JPanel left = new JPanel(new FlowLayout(FlowLayout.LEFT, 0, 0));
+        left.setOpaque(false);
+        if (existing != null) {
+            FlatButton dup = new FlatButton("Duplikuj", false);
+            dup.addActionListener(e -> {
+                String base = existing.name.length() > 16 ? existing.name.substring(0, 16).trim() : existing.name;
+                Profile copy = new Profile(newProfileId(), base + " (kopia)", existing.version);
+                profiles.add(profiles.indexOf(existing) + 1, copy);
+                saveProfiles();
+                applyActive();
+                d.dispose();
+            });
+            left.add(dup);
+            if (profiles.size() > 1) {
+                FlatButton del = new FlatButton("Usuń", false);
+                final boolean[] armed = {false};
+                del.addActionListener(e -> {
+                    if (!armed[0]) {
+                        armed[0] = true;
+                        del.setText("Na pewno?");
+                        left.revalidate();
+                        left.repaint();
+                        return;
+                    }
+                    deleteProfile(existing);
+                    d.dispose();
+                });
+                left.add(javax.swing.Box.createHorizontalStrut(8));
+                left.add(del);
+            }
+        }
+        JPanel south = new JPanel(new BorderLayout());
+        south.setOpaque(false);
+        south.add(left, BorderLayout.WEST);
+        south.add(save, BorderLayout.EAST);
+
+        body.add(mid, BorderLayout.NORTH);
+        body.add(south, BorderLayout.SOUTH);
+
+        Runnable submit = () -> {
+            String n = name.getText().trim();
+            if (n.isEmpty()) {
+                err.setText("Podaj nazwę profilu");
+                return;
+            }
+            if (n.length() > 24) {
+                err.setText("Nazwa może mieć maksymalnie 24 znaki");
+                return;
+            }
+            if (ver[0] == null) {
+                err.setText("Wybierz wersję gry");
+                return;
+            }
+            if (existing != null) {
+                existing.name = n;
+                existing.version = ver[0];
+            } else {
+                Profile created = new Profile(newProfileId(), n, ver[0]);
+                profiles.add(created);
+                activeProfileId = created.id;
+            }
+            saveProfiles();
+            applyActive();
+            d.dispose();
+        };
+        save.addActionListener(e -> submit.run());
+        name.addActionListener(e -> submit.run());
+        SwingUtilities.invokeLater(() -> {
+            name.requestFocusInWindow();
+            name.selectAll();
+        });
+        d.setVisible(true);
+    }
+
 
     // ------------------------------------------------------------------ mody
 
@@ -1961,12 +2313,23 @@ public class BushLaunch {
         frame.repaint();
     }
 
+    /** Zmiana wersji aktywnego profilu. */
     private void openVersionPicker() {
+        Profile ap = activeProfile();
+        if (ap == null) {
+            return;
+        }
+        openVersionPicker(selected, v -> setProfileVersion(ap, v));
+    }
+
+    private void openVersionPicker(VersionEntry current, Consumer<VersionEntry> onChoose) {
         JPanel body = new JPanel(new BorderLayout(0, 10));
         JDialog d = makeDialog("Wybierz wersję", body, 440, 580);
+        final boolean startAll = showAll
+                || (current != null && current.type() != null && !"release".equals(current.type()));
 
         JTextField search = field("");
-        JCheckBox all = new JCheckBox("Snapshoty i bardzo stare wersje", showAll);
+        JCheckBox all = new JCheckBox("Snapshoty i bardzo stare wersje", startAll);
         all.setOpaque(false);
         all.setForeground(MUTED);
         all.setFocusPainted(false);
@@ -2016,8 +2379,14 @@ public class BushLaunch {
                 }
                 model.addElement(v);
             }
-            if (selected != null) {
-                list.setSelectedValue(selected, true);
+            if (current != null) {
+                for (int i = 0; i < model.size(); i++) {
+                    if (model.get(i).id().equals(current.id())) {
+                        list.setSelectedIndex(i);
+                        list.ensureIndexIsVisible(i);
+                        break;
+                    }
+                }
             }
         };
         search.getDocument().addDocumentListener(new DocumentListener() {
@@ -2041,12 +2410,13 @@ public class BushLaunch {
         FlatButton ok = new FlatButton("Wybierz", true);
         Runnable choose = () -> {
             VersionEntry v = list.getSelectedValue();
-            showAll = all.isSelected();
-            if (v != null) {
-                selectVersion(v);
-            } else {
+            if (all.isSelected() != startAll) {
+                showAll = all.isSelected();
                 config.setProperty("showAll", String.valueOf(showAll));
                 saveConfig();
+            }
+            if (v != null) {
+                onChoose.accept(v);
             }
             d.dispose();
         };
@@ -2367,29 +2737,38 @@ public class BushLaunch {
             List<VersionEntry> result = list;
             SwingUtilities.invokeLater(() -> {
                 allVersions = result;
-                loadingVersions = false;
-                String wanted = config.getProperty("version");
-                VersionEntry pick = null;
+                versionIndex.clear();
                 for (VersionEntry v : allVersions) {
-                    if (v.id().equals(wanted)) {
-                        pick = v;
+                    versionIndex.put(v.id(), v);
+                }
+                for (VersionEntry v : installer.installedVersions()) {
+                    versionIndex.putIfAbsent(v.id(), v);
+                }
+                loadingVersions = false;
+                // profil bez wersji (np. po pierwszej migracji) dostaje najnowsze wydanie
+                boolean changed = false;
+                VersionEntry latest = null;
+                for (VersionEntry v : allVersions) {
+                    if ("release".equals(v.type())) {
+                        latest = v;
                         break;
                     }
                 }
-                if (pick == null) {
-                    for (VersionEntry v : allVersions) {
-                        if ("release".equals(v.type())) {
-                            pick = v;
-                            break;
+                if (latest == null && !allVersions.isEmpty()) {
+                    latest = allVersions.get(0);
+                }
+                if (latest != null) {
+                    for (Profile p : profiles) {
+                        if (p.version == null || p.version.isBlank()) {
+                            p.version = latest.id();
+                            changed = true;
                         }
                     }
                 }
-                if (pick == null && !allVersions.isEmpty()) {
-                    pick = allVersions.get(0);
+                if (changed) {
+                    saveProfiles();
                 }
-                selected = pick;
-                refreshRecent();
-                hero.repaint();
+                applyActive();
             });
         }, "load-versions");
         t.setDaemon(true);
@@ -2412,11 +2791,15 @@ public class BushLaunch {
         String name = nick;
         int ram = ramMb;
 
+        Profile ap = activeProfile();
+        if (ap != null) {
+            ap.used = System.currentTimeMillis();
+        }
         config.setProperty("username", name);
         config.setProperty("version", version.id());
         config.setProperty("ram", String.valueOf(ram));
         config.setProperty("showAll", String.valueOf(showAll));
-        saveConfig();
+        saveProfiles();
 
         setBusy(true);
         Thread t = new Thread(() -> runGame(version, name, ram), "game");
@@ -2470,6 +2853,7 @@ public class BushLaunch {
                 gameRunning = false;
                 setBusy(false);
                 refreshStats();
+                refreshRecent();
             });
         }
     }
