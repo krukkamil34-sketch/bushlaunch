@@ -29,7 +29,7 @@ chwili przełączyć się na grę offline albo się wylogować.
 3. Skopiuj **Application (client) ID**.
 4. Zgłoś ten Client ID do Mojangu na https://aka.ms/mce-reviewappid i poczekaj na akceptację (zwykle
    do tygodnia). Dopóki jej nie ma, logowanie kończy się błędem „Invalid app registration”.
-5. Wstaw Client ID do launchera - jedno z dwóch:
+5. Wklej Client ID przy pierwszym kliknięciu „Zaloguj przez Microsoft” - launcher sam zapisze go w `%APPDATA%\.bushlaunch\config.properties`. Możesz też ustawić go ręcznie. Jedno z dwóch:
    - GitHub: *Settings → Secrets and variables → Actions → Variables → New variable* `MS_CLIENT_ID`
      (workflow wbuduje go w jar), albo
    - lokalnie: linijka `msClientId=TWOJ-CLIENT-ID` w `%APPDATA%\.bushlaunch\config.properties`.

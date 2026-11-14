@@ -32,8 +32,8 @@ public final class MicrosoftAuth {
     }
 
     /** Kod do wpisania przez gracza na stronie Microsoftu. */
-    public record DeviceCode(String userCode, String verificationUri, String deviceCode, int interval,
-                             int expiresIn) {
+    public record DeviceCode(String userCode, String verificationUri, String verificationUriComplete,
+                             String deviceCode, int interval, int expiresIn) {
     }
 
     /** Wynik logowania: profil Minecraft, token do gry i (nowy) refresh token. */
@@ -120,10 +120,13 @@ public final class MicrosoftAuth {
             throw new AuthException(oauthError(r), false);
         }
         String uri = Json.str(r.json().get("verification_uri"));
-        if (uri == null) {
+        if (uri == null || uri.isBlank()) {
             uri = "https://www.microsoft.com/link";
         }
-        return new DeviceCode(userCode, uri, deviceCode,
+        // Microsoft może zwrócić adres z kodem już wpisanym - użytkownik trafia
+        // bezpośrednio na ekran zatwierdzenia logowania.
+        String completeUri = Json.str(r.json().get("verification_uri_complete"));
+        return new DeviceCode(userCode, uri, completeUri, deviceCode,
                 (int) Json.num(r.json().get("interval"), 5), (int) Json.num(r.json().get("expires_in"), 900));
     }
 

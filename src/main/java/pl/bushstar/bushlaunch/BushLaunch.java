@@ -15,6 +15,7 @@ import javax.swing.JFrame;
 import javax.swing.JLabel;
 import javax.swing.JList;
 import javax.swing.JPanel;
+import javax.swing.JOptionPane;
 import javax.swing.JScrollBar;
 import javax.swing.JScrollPane;
 import javax.swing.JSlider;
@@ -2458,10 +2459,25 @@ public class BushLaunch {
         Runnable startLogin = () -> {
             String cid = msClientId();
             if (cid == null || cid.isBlank()) {
-                err.setText("<html><body style='width:400px'>Brak Client ID aplikacji Microsoft - "
-                        + "ustaw msClientId w config.properties (patrz README).</body></html>");
-                return;
+                String entered = JOptionPane.showInputDialog(frame,
+                        "Wklej Application (client) ID aplikacji Microsoft.\n\n"
+                                + "Utwórz aplikację w Azure Portal, włącz Allow public client flows, "
+                                + "a następnie zatwierdź Client ID przez Mojang.\n"
+                                + "ID zostanie zapisane lokalnie w config.properties.",
+                        "Konfiguracja logowania Microsoft", JOptionPane.QUESTION_MESSAGE);
+                if (entered == null) {
+                    return;
+                }
+                entered = entered.trim();
+                if (entered.isEmpty()) {
+                    err.setText("<html><body style='width:400px'>Client ID nie może być pusty.</body></html>");
+                    return;
+                }
+                config.setProperty("msClientId", entered);
+                saveConfig();
+                cid = entered;
             }
+            final String clientId = cid;
             err.setText(" ");
             final int my = ++gen[0];
             codeLabel.setText("...");
@@ -2475,18 +2491,22 @@ public class BushLaunch {
             java.util.function.BooleanSupplier cancelled = () -> closed[0] || gen[0] != my;
             Thread t = new Thread(() -> {
                 try {
-                    MicrosoftAuth.DeviceCode dc = MicrosoftAuth.startDeviceLogin(cid);
+                    MicrosoftAuth.DeviceCode dc = MicrosoftAuth.startDeviceLogin(clientId);
                     SwingUtilities.invokeLater(() -> {
                         if (cancelled.getAsBoolean()) {
                             return;
                         }
                         currentCode[0] = dc.userCode();
-                        currentUri[0] = dc.verificationUri();
+                        String loginUrl = dc.verificationUriComplete() != null
+                                && !dc.verificationUriComplete().isBlank()
+                                ? dc.verificationUriComplete() : dc.verificationUri();
+                        currentUri[0] = loginUrl;
                         codeLabel.setText(dc.userCode());
-                        uriLabel.setText(dc.verificationUri());
-                        openUrl(dc.verificationUri());
+                        uriLabel.setText(loginUrl);
+                        status.setText("Otwieram stronę logowania Microsoft...");
+                        openUrl(loginUrl);
                     });
-                    MicrosoftAuth.Login l = MicrosoftAuth.pollLogin(cid, dc, cancelled,
+                    MicrosoftAuth.Login l = MicrosoftAuth.pollLogin(clientId, dc, cancelled,
                             s -> SwingUtilities.invokeLater(() -> {
                                 if (!cancelled.getAsBoolean()) {
                                     status.setText(s);
@@ -3226,12 +3246,26 @@ public class BushLaunch {
     // ------------------------------------------------------------------ pomocnicze
 
     private void openUrl(String url) {
+        if (url == null || url.isBlank()) return;
         try {
-            if (Desktop.isDesktopSupported()) {
-                Desktop.getDesktop().browse(new URI(url));
+            URI uri = new URI(url);
+            if (Desktop.isDesktopSupported() && Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)) {
+                Desktop.getDesktop().browse(uri);
+                return;
+            }
+            // Awaryjne otwieranie domyślnej przeglądarki, także gdy AWT Desktop
+            // nie jest dostępny w danym środowisku.
+            String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
+            if (os.contains("win")) {
+                new ProcessBuilder("rundll32", "url.dll,FileProtocolHandler", url).start();
+            } else if (os.contains("mac")) {
+                new ProcessBuilder("open", url).start();
+            } else {
+                new ProcessBuilder("xdg-open", url).start();
             }
         } catch (Exception e) {
-            appendLog("Nie udało się otworzyć linku: " + e.getMessage());
+            appendLog("Nie udało się otworzyć strony Microsoft. Otwórz ręcznie: " + url
+                    + " (" + e.getMessage() + ")");
         }
     }
 
