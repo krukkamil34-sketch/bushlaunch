@@ -19,18 +19,17 @@ jobs:
       - name: Build JAR
         run: mvn -B package
 
-      - name: Build EXE (jpackage, z wbudowana Java)
+      - name: Przygotuj Jave do spakowania (pelny zestaw modulow)
         shell: pwsh
         run: |
-          jpackage `
-            --type app-image `
-            --name BushLaunch `
-            --app-version 0.1.0 `
-            --vendor BushStar `
-            --input target `
-            --main-jar BushLaunch-0.1.0.jar `
-            --main-class pl.bushstar.bushlaunch.BushLaunch `
-            --dest dist
+          jlink --module-path "$env:JAVA_HOME\jmods" --add-modules ALL-MODULE-PATH --output runtime --strip-debug --no-header-files --no-man-pages --compress zip-6
+
+      - name: Zbuduj EXE (jpackage)
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force input | Out-Null
+          Copy-Item target\BushLaunch-0.2.0.jar input\
+          jpackage --type app-image --name BushLaunch --app-version 0.2.0 --vendor BushStar --input input --main-jar BushLaunch-0.2.0.jar --main-class pl.bushstar.bushlaunch.BushLaunch --runtime-image runtime --dest dist
           Compress-Archive -Path dist\BushLaunch -DestinationPath BushLaunch-windows.zip
 
       - uses: actions/upload-artifact@v4
