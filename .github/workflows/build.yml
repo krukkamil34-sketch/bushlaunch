@@ -1,4 +1,4 @@
-name: Build BushLaunch (Windows EXE)
+name: Build BushLaunch (Windows)
 
 on:
   push:
@@ -19,27 +19,52 @@ jobs:
           java-version: '21'
           cache: maven
 
-      # Daje target/BushLaunch.exe - jeden plik, uruchamiany dwuklikiem (wymaga Javy 17+)
-      - name: Build BushLaunch.exe
-        run: mvn -B package
-
-      # Dodatkowo instalator z wbudowana Java (dla osob bez Javy) - opcjonalny
-      - name: WiX (do instalatora)
-        continue-on-error: true
+      - name: Wersja z pom.xml
         shell: pwsh
         run: |
-          choco install wixtoolset --no-progress -y
-          "C:\Program Files (x86)\WiX Toolset v3.14\bin" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+          [xml]$pom = Get-Content pom.xml
+          $v = $pom.project.version
+          "APP_VERSION=$v" | Out-File -Append -Encoding utf8 $env:GITHUB_ENV
 
-      - name: Zbuduj instalator z wbudowana Java
-        continue-on-error: true
+      # target/BushLaunch.exe - jeden plik, uruchamiany dwuklikiem (wymaga Javy 17+)
+      - name: Build BushLaunch.exe (jar + launch4j)
+        run: mvn -B package
+
+      # Własny runtime Javy (pełny zestaw modułów - launcher używa go też do uruchamiania gry,
+      # gdy w systemie nie ma pasującej Javy)
+      - name: Runtime Javy (jlink)
         shell: pwsh
         run: |
           jlink --module-path "$env:JAVA_HOME\jmods" --add-modules ALL-MODULE-PATH --output runtime --strip-debug --no-header-files --no-man-pages --compress zip-6
+
+      # Aplikacja z wbudowaną Javą: dist\BushLaunch\BushLaunch.exe
+      - name: Zbuduj aplikację (jpackage app-image)
+        shell: pwsh
+        run: |
           New-Item -ItemType Directory -Force input | Out-Null
-          Copy-Item target\BushLaunch-0.2.0.jar input\
-          jpackage --type exe --name BushLaunch --app-version 0.2.0 --vendor BushStar --input input --main-jar BushLaunch-0.2.0.jar --main-class pl.bushstar.bushlaunch.BushLaunch --runtime-image runtime --win-shortcut --win-menu --win-per-user-install --dest dist
-          Move-Item dist\BushLaunch-0.2.0.exe dist\BushLaunch-Setup.exe
+          Copy-Item "target\BushLaunch-$env:APP_VERSION.jar" input\
+          jpackage --type app-image --name BushLaunch --app-version $env:APP_VERSION --vendor BushStar `
+            --input input --main-jar "BushLaunch-$env:APP_VERSION.jar" --main-class pl.bushstar.bushlaunch.BushLaunch `
+            --runtime-image runtime --icon installer\bushlaunch.ico --dest dist
+
+      # Instalator (kreator po polsku/angielsku, skróty, odinstalowanie)
+      - name: Zainstaluj Inno Setup
+        shell: pwsh
+        run: |
+          if (-not (Test-Path "C:\Program Files (x86)\Inno Setup 6\ISCC.exe")) {
+            choco install innosetup --no-progress -y
+          }
+
+      - name: Zbuduj instalator (BushLaunch-Setup.exe)
+        shell: pwsh
+        run: |
+          & "C:\Program Files (x86)\Inno Setup 6\ISCC.exe" "/DAppVersion=$env:APP_VERSION" installer\BushLaunch.iss
+          if (-not (Test-Path dist\BushLaunch-Setup.exe)) { throw "Brak dist\BushLaunch-Setup.exe" }
+
+      # Wersja przenośna bez instalacji (rozpakuj i uruchom)
+      - name: Wersja przenośna (zip)
+        shell: pwsh
+        run: Compress-Archive -Path dist\BushLaunch -DestinationPath dist\BushLaunch-Portable.zip
 
       - name: Wystaw pliki w Releases
         uses: softprops/action-gh-release@v2
@@ -47,10 +72,14 @@ jobs:
           tag_name: latest
           name: BushLaunch (najnowsza wersja)
           files: |
-            target/BushLaunch.exe
             dist/BushLaunch-Setup.exe
+            dist/BushLaunch-Portable.zip
+            target/BushLaunch.exe
 
       - uses: actions/upload-artifact@v4
         with:
-          name: BushLaunch-exe
-          path: target/BushLaunch.exe
+          name: BushLaunch-windows
+          path: |
+            dist/BushLaunch-Setup.exe
+            dist/BushLaunch-Portable.zip
+            target/BushLaunch.exe

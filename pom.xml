@@ -6,7 +6,7 @@
 
     <groupId>pl.bushstar</groupId>
     <artifactId>bushlaunch</artifactId>
-    <version>0.2.0</version>
+    <version>0.3.0</version>
     <packaging>jar</packaging>
     <name>BushLaunch</name>
 
@@ -48,6 +48,7 @@
                             <headerType>gui</headerType>
                             <jar>${project.build.directory}/BushLaunch-${project.version}.jar</jar>
                             <outfile>${project.build.directory}/BushLaunch.exe</outfile>
+                            <icon>${project.basedir}/installer/bushlaunch.ico</icon>
                             <dontWrapJar>false</dontWrapJar>
                             <errTitle>BushLaunch</errTitle>
                             <downloadUrl>https://adoptium.net/temurin/releases/?version=21</downloadUrl>

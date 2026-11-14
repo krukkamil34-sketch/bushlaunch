@@ -21,6 +21,7 @@ import javax.swing.JSlider;
 import javax.swing.JTextArea;
 import javax.swing.JTextField;
 import javax.swing.SwingUtilities;
+import javax.swing.Timer;
 import javax.swing.border.EmptyBorder;
 import javax.swing.event.DocumentEvent;
 import javax.swing.event.DocumentListener;
@@ -43,6 +44,7 @@ import java.awt.GraphicsEnvironment;
 import java.awt.GridLayout;
 import java.awt.Polygon;
 import java.awt.Rectangle;
+import java.awt.RadialGradientPaint;
 import java.awt.RenderingHints;
 import java.awt.Shape;
 import java.awt.event.MouseAdapter;
@@ -83,23 +85,24 @@ import java.util.stream.Stream;
  */
 public class BushLaunch {
 
-    public static final String LAUNCHER_VERSION = "0.2.0";
+    public static final String LAUNCHER_VERSION = "0.3.0";
 
     /** Link do Discorda BushStar - podmień na swój zaproszeniowy. */
     private static final String DISCORD_URL = "https://discord.gg/";
 
     // ------------------------------------------------------------------ kolory i fonty
 
-    static final Color BG = new Color(0x0F0A08);
+    static final Color BG = new Color(0x0C0807);
     static final Color SIDEBAR = new Color(0x130C0A);
-    static final Color PANEL = new Color(0x1A110E);
+    static final Color PANEL = new Color(0x1B120E);
     static final Color PANEL_HI = new Color(0x26180F);
     static final Color ACCENT = new Color(0xE8590C);
     static final Color ACCENT_HI = new Color(0xFF7A1F);
     static final Color ACCENT_DIM = new Color(0x7A330E);
     static final Color TEXT = new Color(0xF4EEEA);
     static final Color MUTED = new Color(0x9C8F89);
-    static final Color BORDER = new Color(0x2E211B);
+    static final Color BORDER = new Color(0x34251D);
+    static final Color GLOW = new Color(0xFF8A3D);
     static final Color DISCORD = new Color(0x5865F2);
 
     private static final String HEAD_FONT = pickFont("Bahnschrift", "Segoe UI", "Arial");
@@ -132,6 +135,19 @@ public class BushLaunch {
 
     static Color alpha(Color c, int a) {
         return new Color(c.getRed(), c.getGreen(), c.getBlue(), a);
+    }
+
+    /** Karta w stylu launchera: gradient, jasna krawędź u góry, ścięty róg. */
+    static void card(Graphics2D g, int x, int y, int w, int h, int c, boolean hot) {
+        Shape sh = cut(x, y, w, h, c);
+        g.setPaint(new GradientPaint(0, y, hot ? new Color(0x2C1A11) : new Color(0x1F1511),
+                0, y + h, hot ? new Color(0x1F120C) : new Color(0x150E0B)));
+        g.fill(sh);
+        g.setStroke(new BasicStroke(1f));
+        g.setColor(hot ? alpha(ACCENT, 170) : BORDER);
+        g.draw(cut(x + 0.5, y + 0.5, w - 1, h - 1, c));
+        g.setPaint(new GradientPaint(x, y, alpha(Color.WHITE, 26), x + w, y, alpha(Color.WHITE, 0)));
+        g.fillRect(x + 1, y + 1, Math.max(0, w - c - 2), 1);
     }
 
     /** Prostokąt z ściętym prawym górnym rogiem (jak w Fire Client). */
@@ -245,29 +261,7 @@ public class BushLaunch {
         frame.setLocationRelativeTo(null);
         frame.setMaximizedBounds(GraphicsEnvironment.getLocalGraphicsEnvironment().getMaximumWindowBounds());
 
-        JPanel root = new JPanel(new BorderLayout());
-        root.setBackground(BG);
-        root.setBorder(BorderFactory.createLineBorder(BORDER));
-
-        cards = new CardLayout();
-        pages = new JPanel(cards);
-        pages.setBackground(BG);
-        pages.add(buildHome(), "home");
-        pages.add(buildProfilesPage(), "profiles");
-        pages.add(buildModsPage(), "mods");
-        pages.add(buildLockerPage(), "locker");
-        pages.add(buildSoon("Sklep", "Sklep BushStar pojawi się tutaj."), "shop");
-        pages.add(buildSoon("Nagroda", "Codzienne nagrody - wkrótce."), "reward");
-        pages.add(buildConsolePage(), "console");
-
-        JPanel main = new JPanel(new BorderLayout());
-        main.setBackground(BG);
-        main.add(buildSidebar(), BorderLayout.WEST);
-        main.add(pages, BorderLayout.CENTER);
-
-        root.add(buildTitleBar(), BorderLayout.NORTH);
-        root.add(main, BorderLayout.CENTER);
-
+        JPanel root = buildRoot();
         frame.setContentPane(root);
         showPage("home");
         frame.setVisible(true);
@@ -293,6 +287,34 @@ public class BushLaunch {
         refreshStats();
         loadSkinAsync();
         loadVersions();
+    }
+
+    /** Składa całe UI (bez okna) - osobno, żeby dało się je też wyrenderować do obrazka. */
+    private JPanel buildRoot() {
+        JPanel root = new JPanel(new BorderLayout());
+        root.setBackground(BG);
+        root.setBorder(BorderFactory.createLineBorder(BORDER));
+
+        cards = new CardLayout();
+        pages = new JPanel(cards);
+        pages.setBackground(BG);
+        pages.add(buildHome(), "home");
+        pages.add(buildProfilesPage(), "profiles");
+        pages.add(buildModsPage(), "mods");
+        pages.add(buildLockerPage(), "locker");
+        pages.add(buildSoon("Sklep", "Sklep BushStar pojawi się tutaj.", 4), "shop");
+        pages.add(buildSoon("Nagroda", "Codzienne nagrody dla graczy BushStar.", 5), "reward");
+        pages.add(buildConsolePage(), "console");
+
+        JPanel main = new JPanel(new BorderLayout());
+        main.setBackground(BG);
+        main.add(buildSidebar(), BorderLayout.WEST);
+        main.add(pages, BorderLayout.CENTER);
+
+        root.add(buildTitleBar(), BorderLayout.NORTH);
+        root.add(main, BorderLayout.CENTER);
+
+        return root;
     }
 
     private static BufferedImage makeIcon() {
@@ -374,18 +396,31 @@ public class BushLaunch {
     // ------------------------------------------------------------------ pasek boczny
 
     private JComponent buildSidebar() {
-        JPanel side = new JPanel(new BorderLayout());
-        side.setBackground(SIDEBAR);
-        side.setPreferredSize(new Dimension(220, 10));
+        JPanel side = new JPanel(new BorderLayout()) {
+            @Override
+            protected void paintComponent(Graphics g0) {
+                Graphics2D g = (Graphics2D) g0.create();
+                g.setPaint(new GradientPaint(0, 0, new Color(0x160D0A), 0, getHeight(), new Color(0x0F0907)));
+                g.fillRect(0, 0, getWidth(), getHeight());
+                g.setColor(BORDER);
+                g.fillRect(getWidth() - 1, 0, 1, getHeight());
+                g.dispose();
+            }
+        };
+        side.setOpaque(false);
+        side.setPreferredSize(new Dimension(236, 10));
 
         JComponent logo = new JComponent() {
             @Override
             protected void paintComponent(Graphics g0) {
                 Graphics2D g = (Graphics2D) g0.create();
                 aa(g);
-                g.setColor(ACCENT);
+                g.setPaint(new RadialGradientPaint(41f, 48f, 34f,
+                        new float[]{0f, 1f}, new Color[]{alpha(GLOW, 90), alpha(GLOW, 0)}));
+                g.fillRect(0, 0, getWidth(), getHeight());
+                g.setPaint(new GradientPaint(0, 24, ACCENT_HI, 0, 58, new Color(0xC2410C)));
                 g.fill(flame(24, 24, 34));
-                g.setColor(new Color(0xFFB347));
+                g.setColor(new Color(0xFFD08A));
                 g.fill(flame(33, 43, 16));
                 g.setFont(head(Font.BOLD, 23));
                 g.setColor(ACCENT_HI);
@@ -413,33 +448,33 @@ public class BushLaunch {
         JPanel bottom = new JPanel();
         bottom.setOpaque(false);
         bottom.setLayout(new BoxLayout(bottom, BoxLayout.Y_AXIS));
-        bottom.setBorder(new EmptyBorder(0, 0, 14, 0));
+        bottom.setBorder(new EmptyBorder(0, 0, 6, 0));
 
         Clickable user = new Clickable(() -> askNick(null)) {
             @Override
             protected void paintComponent(Graphics g0) {
                 Graphics2D g = (Graphics2D) g0.create();
                 aa(g);
-                if (hover) {
-                    g.setColor(alpha(Color.WHITE, 10));
-                    g.fillRect(0, 0, getWidth(), getHeight());
-                }
-                drawHead(g, skin, 20, 12, 44);
-                g.setFont(body(Font.PLAIN, 16));
+                int w = getWidth() - 28;
+                g.translate(14, 4);
+                card(g, 0, 0, w, getHeight() - 8, 14, hover);
+                drawHead(g, skin, 12, 11, 42);
+                g.setFont(body(Font.BOLD, 15));
                 g.setColor(TEXT);
-                g.drawString(nick.isEmpty() ? "Ustaw nick" : nick, 76, 32);
+                g.drawString(nick.isEmpty() ? "Ustaw nick" : nick, 64, 29);
                 g.setFont(body(Font.PLAIN, 12));
+                g.setColor(busy ? ACCENT_HI : MUTED);
+                g.drawString(busy ? "Przygotowanie..." : "Konto offline", 64, 47);
                 g.setColor(MUTED);
-                g.drawString(busy ? "Przygotowanie..." : "Offline", 76, 50);
                 g.setStroke(new BasicStroke(1.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-                int cx = getWidth() - 22;
+                int cx = w - 18;
                 g.drawLine(cx - 3, 26, cx + 2, 31);
                 g.drawLine(cx + 2, 31, cx - 3, 36);
                 g.dispose();
             }
         };
-        user.setPreferredSize(new Dimension(220, 68));
-        user.setMaximumSize(new Dimension(Integer.MAX_VALUE, 68));
+        user.setPreferredSize(new Dimension(220, 72));
+        user.setMaximumSize(new Dimension(Integer.MAX_VALUE, 72));
         user.setAlignmentX(Component.LEFT_ALIGNMENT);
         sidebarUser = user;
 
@@ -448,32 +483,44 @@ public class BushLaunch {
             protected void paintComponent(Graphics g0) {
                 Graphics2D g = (Graphics2D) g0.create();
                 aa(g);
-                g.setColor(hover ? DISCORD.brighter() : DISCORD);
-                g.fill(cut(0, 0, getWidth(), getHeight(), 14));
+                int w = getWidth() - 28;
+                g.translate(14, 2);
+                g.setPaint(new GradientPaint(0, 0, hover ? new Color(0x7480FF) : new Color(0x5865F2),
+                        0, 44, hover ? new Color(0x5865F2) : new Color(0x4752C4)));
+                g.fill(new RoundRectangle2D.Double(0, 0, w, 44, 14, 14));
                 g.setColor(Color.WHITE);
-                g.fill(new RoundRectangle2D.Double(24, 22, 24, 18, 8, 8));
-                g.setColor(DISCORD);
-                g.fillOval(30, 27, 4, 5);
-                g.fillOval(38, 27, 4, 5);
+                g.fill(new RoundRectangle2D.Double(16, 13, 22, 17, 8, 8));
+                g.setColor(new Color(0x5865F2));
+                g.fillOval(21, 18, 4, 5);
+                g.fillOval(29, 18, 4, 5);
                 g.setColor(Color.WHITE);
-                g.setFont(body(Font.BOLD, 16));
-                g.drawString("Discord", 60, 37);
+                g.setFont(body(Font.BOLD, 15));
+                g.drawString("Discord", 50, 28);
                 g.dispose();
             }
         };
-        discord.setPreferredSize(new Dimension(190, 62));
-        discord.setMaximumSize(new Dimension(190, 62));
+        discord.setPreferredSize(new Dimension(220, 50));
+        discord.setMaximumSize(new Dimension(Integer.MAX_VALUE, 50));
         discord.setAlignmentX(Component.LEFT_ALIGNMENT);
 
-        JPanel discordWrap = new JPanel(new BorderLayout());
-        discordWrap.setOpaque(false);
-        discordWrap.setBorder(new EmptyBorder(8, 0, 0, 0));
-        discordWrap.setMaximumSize(new Dimension(Integer.MAX_VALUE, 72));
-        discordWrap.add(discord, BorderLayout.WEST);
-        discordWrap.setAlignmentX(Component.LEFT_ALIGNMENT);
+        JComponent version = new JComponent() {
+            @Override
+            protected void paintComponent(Graphics g0) {
+                Graphics2D g = (Graphics2D) g0.create();
+                aa(g);
+                g.setFont(body(Font.PLAIN, 11));
+                g.setColor(alpha(MUTED, 170));
+                g.drawString("BushLaunch v" + LAUNCHER_VERSION + "  ·  by BushStar", 18, 16);
+                g.dispose();
+            }
+        };
+        version.setPreferredSize(new Dimension(220, 24));
+        version.setMaximumSize(new Dimension(Integer.MAX_VALUE, 24));
+        version.setAlignmentX(Component.LEFT_ALIGNMENT);
 
         bottom.add(user);
-        bottom.add(discordWrap);
+        bottom.add(discord);
+        bottom.add(version);
 
         side.add(logo, BorderLayout.NORTH);
         side.add(nav, BorderLayout.CENTER);
@@ -512,28 +559,29 @@ public class BushLaunch {
             this.label = label;
             this.icon = icon;
             this.onClick = () -> showPage(key);
-            setPreferredSize(new Dimension(220, 58));
-            setMaximumSize(new Dimension(Integer.MAX_VALUE, 58));
+            setPreferredSize(new Dimension(220, 54));
+            setMaximumSize(new Dimension(Integer.MAX_VALUE, 54));
         }
 
         @Override
         protected void paintComponent(Graphics g0) {
             Graphics2D g = (Graphics2D) g0.create();
             aa(g);
+            int hh = getHeight() - 8;
             if (active) {
-                g.setPaint(new GradientPaint(0, 0, alpha(ACCENT, 46), getWidth(), 0, alpha(ACCENT, 0)));
-                g.fillRect(0, 0, getWidth(), getHeight());
-                g.setColor(ACCENT);
-                g.fillRect(0, 8, 4, getHeight() - 16);
+                g.setPaint(new GradientPaint(10, 0, alpha(ACCENT, 70), getWidth() - 10, 0, alpha(ACCENT, 8)));
+                g.fill(new RoundRectangle2D.Double(10, 4, getWidth() - 20, hh, 14, 14));
+                g.setColor(ACCENT_HI);
+                g.fill(new RoundRectangle2D.Double(10, 12, 4, hh - 16, 4, 4));
             } else if (hover) {
-                g.setColor(alpha(Color.WHITE, 10));
-                g.fillRect(0, 0, getWidth(), getHeight());
+                g.setColor(alpha(Color.WHITE, 12));
+                g.fill(new RoundRectangle2D.Double(10, 4, getWidth() - 20, hh, 14, 14));
             }
-            Color c = active || hover ? TEXT : MUTED;
-            icon(g, icon, 26, 18, 22, c);
-            g.setColor(c);
-            g.setFont(body(Font.PLAIN, 17));
-            g.drawString(label, 64, 35);
+            Color c = active ? ACCENT_HI : hover ? TEXT : MUTED;
+            icon(g, icon, 30, 17, 22, c);
+            g.setColor(active || hover ? TEXT : MUTED);
+            g.setFont(body(active ? Font.BOLD : Font.PLAIN, 16));
+            g.drawString(label, 66, 34);
             g.dispose();
         }
     }
@@ -543,7 +591,7 @@ public class BushLaunch {
     private JComponent buildHome() {
         JPanel home = new JPanel(new BorderLayout(18, 0));
         home.setBackground(BG);
-        home.setBorder(new EmptyBorder(22, 22, 22, 22));
+        home.setBorder(new EmptyBorder(20, 22, 20, 22));
 
         hero = new Hero();
 
@@ -591,77 +639,107 @@ public class BushLaunch {
 
         JPanel col = new JPanel(new BorderLayout(0, 16));
         col.setOpaque(false);
-        col.setPreferredSize(new Dimension(290, 10));
+        col.setPreferredSize(new Dimension(300, 10));
 
-        Clickable account = new Clickable(() -> askNick(null)) {
-            @Override
-            protected void paintComponent(Graphics g0) {
-                Graphics2D g = (Graphics2D) g0.create();
-                aa(g);
-                g.setColor(hover ? new Color(0x4A3A32) : new Color(0x3B2E27));
-                g.fill(cut(0, 0, getWidth(), getHeight(), 24));
-                drawHead(g, skin, 16, 17, 56);
-                g.setColor(TEXT);
-                g.setFont(head(Font.BOLD, 28));
-                g.drawString(nick.isEmpty() ? "Ustaw nick" : nick, 86, 47);
-                g.setColor(MUTED);
-                g.setFont(body(Font.PLAIN, 13));
-                g.drawString("Zmień konto", 86, 68);
-                g.setStroke(new BasicStroke(1.8f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-                g.setColor(TEXT);
-                int cx = getWidth() - 26;
-                g.drawLine(cx - 5, 40, cx, 46);
-                g.drawLine(cx, 46, cx + 5, 40);
-                g.dispose();
-            }
-        };
-        account.setPreferredSize(new Dimension(10, 90));
+        InfoCard news = new InfoCard("Nowości", 10, new String[][]{
+                {"v" + LAUNCHER_VERSION, "Nowy wygląd i instalator Windows"},
+                {"Wersje", "Wszystkie wydania i snapshoty Mojang"},
+                {"Offline", "Wystarczy nick, bez logowania"},
+                {"Wkrótce", "Logowanie Microsoft, Fabric i Forge"}});
 
-        InfoCard news = new InfoCard("Nowości", "Brak nowości.", false);
-        news.setPreferredSize(new Dimension(10, 150));
-        InfoCard friends = new InfoCard("Znajomi", "Tryb offline - znajomi wkrótce.", true);
+        JPanel actions = new JPanel(new GridLayout(3, 1, 0, 10));
+        actions.setOpaque(false);
+        actions.setPreferredSize(new Dimension(10, 214));
+        actions.setBorder(new EmptyBorder(0, 0, 0, 0));
+        actions.add(new ActionRow("Folder gry", "Otwórz katalog z grą", 9,
+                () -> openFolder(installer.gameDir())));
+        actions.add(new ActionRow("Ustawienia", "RAM i foldery launchera", 7, this::openSettings));
+        actions.add(new ActionRow("Konsola", "Log launchera i gry", 6, () -> showPage("console")));
 
-        JPanel top = new JPanel(new BorderLayout(0, 16));
-        top.setOpaque(false);
-        top.add(account, BorderLayout.NORTH);
-        top.add(news, BorderLayout.CENTER);
-        col.add(top, BorderLayout.NORTH);
-        col.add(friends, BorderLayout.CENTER);
+        col.add(news, BorderLayout.CENTER);
+        col.add(actions, BorderLayout.SOUTH);
 
         home.add(left, BorderLayout.CENTER);
         home.add(col, BorderLayout.EAST);
         return home;
     }
 
+    /** Karta z tytułem i listą wpisów (nagłówek + opis). */
     private static final class InfoCard extends JComponent {
         private final String title;
-        private final String text;
-        private final boolean eye;
+        private final int icon;
+        private final String[][] rows;
 
-        InfoCard(String title, String text, boolean eye) {
+        InfoCard(String title, int icon, String[][] rows) {
             this.title = title;
-            this.text = text;
-            this.eye = eye;
+            this.icon = icon;
+            this.rows = rows;
         }
 
         @Override
         protected void paintComponent(Graphics g0) {
             Graphics2D g = (Graphics2D) g0.create();
             aa(g);
-            g.setColor(new Color(0x150E0B));
-            g.fill(cut(0, 0, getWidth(), getHeight(), 24));
-            g.setColor(BORDER);
-            g.setStroke(new BasicStroke(1f));
-            g.draw(cut(0.5, 0.5, getWidth() - 1, getHeight() - 1, 24));
+            card(g, 0, 0, getWidth(), getHeight(), 24, false);
+            icon(g, icon, 22, 22, 22, ACCENT_HI);
             g.setColor(TEXT);
-            g.setFont(head(Font.BOLD, 26));
-            g.drawString(title, 22, 44);
-            g.setColor(MUTED);
-            g.setFont(body(Font.PLAIN, 14));
-            g.drawString(text, 22, 82);
-            if (eye) {
-                icon(g, 8, getWidth() - 56, 26, 22, MUTED);
+            g.setFont(head(Font.BOLD, 22));
+            g.drawString(title, 54, 40);
+            g.setColor(BORDER);
+            g.fillRect(22, 58, getWidth() - 44, 1);
+            int y = 82;
+            int step = Math.max(70, Math.min(96, (getHeight() - 90) / Math.max(1, rows.length)));
+            for (String[] r : rows) {
+                if (y + 40 > getHeight()) {
+                    break;
+                }
+                g.setColor(ACCENT);
+                g.fill(new RoundRectangle2D.Double(22, y - 11, 4, 40, 4, 4));
+                g.setColor(TEXT);
+                g.setFont(body(Font.BOLD, 14));
+                g.drawString(r[0], 38, y + 3);
+                g.setColor(MUTED);
+                g.setFont(body(Font.PLAIN, 13));
+                g.drawString(r[1], 38, y + 24);
+                y += step;
             }
+            g.dispose();
+        }
+    }
+
+    /** Wiersz szybkiej akcji w prawej kolumnie. */
+    private static final class ActionRow extends Clickable {
+        private final String title;
+        private final String sub;
+        private final int icon;
+
+        ActionRow(String title, String sub, int icon, Runnable onClick) {
+            super(onClick);
+            this.title = title;
+            this.sub = sub;
+            this.icon = icon;
+        }
+
+        @Override
+        protected void paintComponent(Graphics g0) {
+            Graphics2D g = (Graphics2D) g0.create();
+            aa(g);
+            card(g, 0, 0, getWidth(), getHeight(), 16, hover);
+            g.setColor(alpha(ACCENT, hover ? 70 : 38));
+            g.fill(new RoundRectangle2D.Double(14, (getHeight() - 38) / 2.0, 38, 38, 12, 12));
+            icon(g, icon, 22, (getHeight() - 22) / 2, 22, hover ? Color.WHITE : ACCENT_HI);
+            g.setColor(TEXT);
+            g.setFont(body(Font.BOLD, 15));
+            g.drawString(title, 66, getHeight() / 2 - 2);
+            g.setColor(MUTED);
+            g.setFont(body(Font.PLAIN, 12));
+            g.drawString(sub, 66, getHeight() / 2 + 16);
+            g.setColor(hover ? ACCENT_HI : MUTED);
+            g.setStroke(new BasicStroke(1.7f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            int cx = getWidth() - 24;
+            int cy = getHeight() / 2;
+            g.drawLine(cx - 3, cy - 5, cx + 2, cy);
+            g.drawLine(cx + 2, cy, cx - 3, cy + 5);
             g.dispose();
         }
     }
@@ -678,8 +756,26 @@ public class BushLaunch {
         private boolean hoverPlay;
         private boolean hoverGear;
         private boolean hoverVer;
+        private final long t0 = System.nanoTime();
+        /** Iskry: x (0-1), prędkość, rozmiar, faza, kołysanie. */
+        private final double[][] embers = new double[46][5];
 
         Hero() {
+            Random er = new Random(7);
+            for (double[] e : embers) {
+                e[0] = er.nextDouble();
+                e[1] = 0.025 + er.nextDouble() * 0.05;
+                e[2] = 1.4 + er.nextDouble() * 2.6;
+                e[3] = er.nextDouble();
+                e[4] = er.nextDouble() * Math.PI * 2;
+            }
+            Timer anim = new Timer(40, e -> {
+                if (isShowing()) {
+                    repaint();
+                }
+            });
+            anim.start();
+
             MouseAdapter m = new MouseAdapter() {
                 @Override
                 public void mouseMoved(MouseEvent e) {
@@ -744,12 +840,48 @@ public class BushLaunch {
             g.fillRect(0, barY - 130, w, 130);
             g.setColor(PANEL);
             g.fillRect(0, barY, w, barH);
+            g.setPaint(new GradientPaint(0, 0, alpha(ACCENT, 0), w / 2f, 0, alpha(ACCENT, 200)));
+            g.fillRect(0, barY, w / 2, 2);
+            g.setPaint(new GradientPaint(w / 2f, 0, alpha(ACCENT, 200), w, 0, alpha(ACCENT, 0)));
+            g.fillRect(w / 2, barY, w - w / 2, 2);
+
+            double time = (System.nanoTime() - t0) / 1e9;
 
             // postać
             double availH = barY;
             double unit = Math.max(4, availH * 0.66 / 32.0);
             double top = (availH - 32 * unit) / 2 + 30;
+
+            // ciepła poświata za postacią
+            float gr = (float) (availH * 0.62);
+            float breathe = (float) (1 + 0.04 * Math.sin(time * 1.6));
+            g.setPaint(new RadialGradientPaint(w / 2f, (float) (top + 16 * unit), gr * breathe,
+                    new float[]{0f, 1f}, new Color[]{alpha(GLOW, 80), alpha(GLOW, 0)}));
+            g.fillRect(0, 0, w, barY);
+
+            // delikatny cień pod postacią
+            g.setColor(alpha(Color.BLACK, 70));
+            g.fill(new Ellipse2D.Double(w / 2.0 - unit * 7, top + 32 * unit - unit * 0.6, unit * 14, unit * 1.6));
+
             drawFigure(g, skin, w / 2.0, top, unit);
+
+            // unoszące się iskry
+            for (double[] e : embers) {
+                double ph = (time * e[1] + e[3]) % 1.0;
+                double ex = e[0] * w + Math.sin(time * 0.9 + e[4]) * 14;
+                double ey = barY - ph * (barY + 20);
+                int a = (int) (170 * Math.sin(Math.PI * ph));
+                double sz = e[2];
+                g.setColor(alpha(GLOW, Math.max(0, a / 4)));
+                g.fill(new Ellipse2D.Double(ex - sz * 2, ey - sz * 2, sz * 4, sz * 4));
+                g.setColor(alpha(new Color(0xFFD9A0), Math.max(0, a)));
+                g.fill(new Ellipse2D.Double(ex - sz / 2, ey - sz / 2, sz, sz));
+            }
+
+            // winieta
+            g.setPaint(new RadialGradientPaint(w / 2f, barY * 0.5f, Math.max(w, barY) * 0.75f,
+                    new float[]{0.55f, 1f}, new Color[]{alpha(Color.BLACK, 0), alpha(Color.BLACK, 120)}));
+            g.fillRect(0, 0, w, barY);
 
             // tabliczka z nickiem
             String tag = nick.isEmpty() ? "Ustaw nick" : nick;
@@ -758,21 +890,25 @@ public class BushLaunch {
             int tw = fm.stringWidth(tag) + 44;
             int tx = (int) (w / 2.0 - tw / 2.0);
             int ty = (int) (top - 58);
-            g.setColor(new Color(0x2B, 0x30, 0x48, 220));
-            g.fillRect(tx, ty, tw, 44);
+            g.setColor(new Color(0x0C, 0x08, 0x07, 200));
+            g.fill(cut(tx, ty, tw, 44, 12));
+            g.setColor(ACCENT);
+            g.fillRect(tx, ty + 40, tw, 3);
             g.setColor(TEXT);
-            g.drawString(tag, tx + 22, ty + 32);
+            g.drawString(tag, tx + 22, ty + 31);
 
             // dolny pasek: ustawienia, wersja
             int by = barY + (barH - 64) / 2;
             gearRect.setBounds(28, by, 50, 64);
-            g.setColor(hoverGear ? PANEL_HI.brighter() : PANEL_HI);
-            g.fillRect(gearRect.x, gearRect.y, gearRect.width, gearRect.height);
+            g.setPaint(new GradientPaint(0, gearRect.y, hoverGear ? new Color(0x3A2518) : new Color(0x2C1B12),
+                    0, gearRect.y + gearRect.height, new Color(0x201410)));
+            g.fill(cut(gearRect.x, gearRect.y, gearRect.width, gearRect.height, 10));
             icon(g, 7, gearRect.x + 14, gearRect.y + 21, 22, hoverGear ? TEXT : MUTED);
 
             verRect.setBounds(88, by, 212, 64);
-            g.setColor(hoverVer ? PANEL_HI.brighter() : PANEL_HI);
-            g.fillRect(verRect.x, verRect.y, verRect.width, verRect.height);
+            g.setPaint(new GradientPaint(0, verRect.y, hoverVer ? new Color(0x3A2518) : new Color(0x2C1B12),
+                    0, verRect.y + verRect.height, new Color(0x201410)));
+            g.fill(cut(verRect.x, verRect.y, verRect.width, verRect.height, 10));
             String vid = selected == null ? "Wybierz wersję" : selected.id();
             String vsub = selected == null ? (loadingVersions ? "Wczytywanie..." : "Brak wersji")
                     : typeLabel(selected.type());
@@ -781,7 +917,7 @@ public class BushLaunch {
             }
             int textX = verRect.x + (selected != null ? 60 : 14);
             g.setFont(head(Font.BOLD, 19));
-            g.setColor(MUTED.brighter());
+            g.setColor(TEXT);
             g.drawString(vid, textX, verRect.y + 28);
             g.setFont(body(Font.PLAIN, 13));
             g.setColor(MUTED);
@@ -828,6 +964,16 @@ public class BushLaunch {
                     new int[]{py, py, py + ph, py + ph}, 4);
 
             boolean disabled = busy || loadingVersions;
+            if (!disabled || (busy && !gameRunning)) {
+                double pulse = 0.5 + 0.5 * Math.sin(time * 2.4);
+                int gl = disabled ? 10 : (int) (14 + 8 * pulse + (hoverPlay ? 8 : 0));
+                for (int i = gl; i >= 2; i -= 2) {
+                    g.setColor(alpha(GLOW, (int) ((disabled ? 6 : 12) * (1 - i / (double) (gl + 2)) + 2)));
+                    g.setStroke(new BasicStroke(i * 2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                    g.draw(playPoly);
+                }
+                g.setStroke(new BasicStroke(1f));
+            }
             Shape oldClip = g.getClip();
             g.clip(playPoly);
             if (busy && !gameRunning && !indeterminate && progTotal > 0) {
@@ -842,6 +988,15 @@ public class BushLaunch {
                 g.setPaint(new GradientPaint(px, py, hoverPlay ? ACCENT_HI : ACCENT.brighter(),
                         px, py + ph, hoverPlay ? ACCENT : ACCENT.darker()));
                 g.fillRect(px, py, pw, ph);
+                // połysk przesuwający się po przycisku
+                double sh = ((time * 0.35) % 2.2) - 0.6;
+                int sx = (int) (px + sh * pw);
+                g.setPaint(new GradientPaint(sx, 0, alpha(Color.WHITE, 0), sx + 40, 0, alpha(Color.WHITE, 60)));
+                g.fillRect(sx, py, 40, ph);
+                g.setPaint(new GradientPaint(sx + 40, 0, alpha(Color.WHITE, 60), sx + 80, 0, alpha(Color.WHITE, 0)));
+                g.fillRect(sx + 40, py, 40, ph);
+                g.setPaint(new GradientPaint(0, py, alpha(Color.WHITE, 50), 0, py + ph / 2f, alpha(Color.WHITE, 0)));
+                g.fillRect(px, py, pw, ph / 2);
             }
             g.setClip(oldClip);
 
@@ -1236,11 +1391,16 @@ public class BushLaunch {
             Graphics2D g = (Graphics2D) g0.create();
             aa(g);
             boolean sel = selected != null && selected.id().equals(v.id());
-            g.setColor(sel ? new Color(0x2A1810) : hover ? PANEL_HI : PANEL);
-            g.fill(cut(0, 0, getWidth(), getHeight(), 18));
-            g.setColor(sel ? ACCENT : BORDER);
-            g.setStroke(new BasicStroke(sel ? 1.6f : 1f));
-            g.draw(cut(0.5, 0.5, getWidth() - 1, getHeight() - 1, 18));
+            card(g, 0, 0, getWidth(), getHeight(), 18, sel || hover);
+            if (sel) {
+                g.setColor(ACCENT);
+                g.setStroke(new BasicStroke(1.6f));
+                g.draw(cut(0.8, 0.8, getWidth() - 1.6, getHeight() - 1.6, 18));
+                g.setFont(body(Font.BOLD, 10));
+                g.setColor(ACCENT_HI);
+                String tag = "WYBRANA";
+                g.drawString(tag, getWidth() - 14 - g.getFontMetrics().stringWidth(tag), getHeight() - 12);
+            }
             drawBlock(g, 14, 16, 44, v.id().hashCode());
             g.setColor(TEXT);
             g.setFont(head(Font.BOLD, 22));
@@ -1346,6 +1506,8 @@ public class BushLaunch {
         wrap.setOpaque(false);
         wrap.add(modsList, BorderLayout.NORTH);
         JScrollPane scroll = darkScroll(wrap);
+        scroll.setBorder(new EmptyBorder(0, 0, 0, 0));
+        scroll.getViewport().setOpaque(false);
         p.add(scroll, BorderLayout.CENTER);
 
         modsInfo = new JLabel(" ");
@@ -1378,26 +1540,76 @@ public class BushLaunch {
         }
         java.util.Collections.sort(names);
         for (String n : names) {
-            JLabel l = new JLabel(n);
-            l.setForeground(TEXT);
-            l.setFont(body(Font.PLAIN, 15));
-            l.setBorder(new EmptyBorder(10, 14, 10, 14));
-            l.setOpaque(true);
-            l.setBackground(PANEL);
-            l.setAlignmentX(Component.LEFT_ALIGNMENT);
-            l.setMaximumSize(new Dimension(Integer.MAX_VALUE, 40));
-            modsList.add(l);
-            modsList.add(javax.swing.Box.createVerticalStrut(6));
+            ModRow row = new ModRow(n, dir.resolve(n));
+            row.setAlignmentX(Component.LEFT_ALIGNMENT);
+            modsList.add(row);
+            modsList.add(javax.swing.Box.createVerticalStrut(8));
         }
         if (names.isEmpty()) {
-            JLabel l = new JLabel("Brak modów w folderze mods.");
-            l.setForeground(MUTED);
-            l.setFont(body(Font.PLAIN, 15));
-            modsList.add(l);
+            JComponent empty = new JComponent() {
+                @Override
+                protected void paintComponent(Graphics g0) {
+                    Graphics2D g = (Graphics2D) g0.create();
+                    aa(g);
+                    card(g, 0, 0, getWidth(), getHeight(), 20, false);
+                    icon(g, 2, getWidth() / 2 - 17, 38, 34, alpha(ACCENT_HI, 200));
+                    g.setFont(head(Font.BOLD, 20));
+                    g.setColor(TEXT);
+                    String t = "Brak modów";
+                    g.drawString(t, (getWidth() - g.getFontMetrics().stringWidth(t)) / 2, 112);
+                    g.setFont(body(Font.PLAIN, 14));
+                    g.setColor(MUTED);
+                    String u = "Wrzuć pliki .jar do folderu mods - pojawią się tutaj.";
+                    g.drawString(u, (getWidth() - g.getFontMetrics().stringWidth(u)) / 2, 138);
+                    g.dispose();
+                }
+            };
+            empty.setPreferredSize(new Dimension(10, 170));
+            empty.setMaximumSize(new Dimension(Integer.MAX_VALUE, 170));
+            empty.setAlignmentX(Component.LEFT_ALIGNMENT);
+            modsList.add(empty);
         }
         modsInfo.setText("Launcher uruchamia na razie czysty Minecraft. Obsługa Fabric/Forge - wkrótce.");
         modsList.revalidate();
         modsList.repaint();
+    }
+
+    /** Wiersz moda: ikona, nazwa pliku, rozmiar. */
+    private static final class ModRow extends JComponent {
+        private final String name;
+        private final String size;
+
+        ModRow(String name, Path file) {
+            this.name = name;
+            String sz = "";
+            try {
+                long b = Files.size(file);
+                sz = b >= 1_048_576 ? String.format(Locale.ROOT, "%.1f MB", b / 1_048_576.0)
+                        : Math.max(1, b / 1024) + " KB";
+            } catch (IOException ignored) {
+                // bez rozmiaru
+            }
+            this.size = sz;
+            setPreferredSize(new Dimension(10, 54));
+            setMaximumSize(new Dimension(Integer.MAX_VALUE, 54));
+        }
+
+        @Override
+        protected void paintComponent(Graphics g0) {
+            Graphics2D g = (Graphics2D) g0.create();
+            aa(g);
+            card(g, 0, 0, getWidth(), getHeight(), 14, false);
+            g.setColor(alpha(ACCENT, 38));
+            g.fill(new RoundRectangle2D.Double(10, 9, 36, 36, 10, 10));
+            icon(g, 2, 17, 16, 22, ACCENT_HI);
+            g.setColor(TEXT);
+            g.setFont(body(Font.PLAIN, 15));
+            g.drawString(name, 60, 32);
+            g.setColor(MUTED);
+            g.setFont(body(Font.PLAIN, 13));
+            g.drawString(size, getWidth() - 18 - g.getFontMetrics().stringWidth(size), 32);
+            g.dispose();
+        }
     }
 
     private void refreshStats() {
@@ -1492,7 +1704,7 @@ public class BushLaunch {
         return p;
     }
 
-    private JComponent buildSoon(String title, String text) {
+    private JComponent buildSoon(String title, String text, int iconKind) {
         JPanel p = new JPanel(new BorderLayout());
         p.setBackground(BG);
         p.setBorder(new EmptyBorder(26, 30, 26, 30));
@@ -1502,12 +1714,21 @@ public class BushLaunch {
             protected void paintComponent(Graphics g0) {
                 Graphics2D g = (Graphics2D) g0.create();
                 aa(g);
-                g.setColor(PANEL);
-                g.fill(cut(0, 0, getWidth(), getHeight(), 26));
-                g.setFont(head(Font.BOLD, 44));
-                g.setColor(alpha(ACCENT, 190));
+                card(g, 0, 0, getWidth(), getHeight(), 26, false);
+                int cx = getWidth() / 2;
+                int cy = getHeight() / 2;
+                g.setPaint(new RadialGradientPaint(cx, cy - 20, 150f,
+                        new float[]{0f, 1f}, new Color[]{alpha(GLOW, 60), alpha(GLOW, 0)}));
+                g.fillRect(0, 0, getWidth(), getHeight());
+                icon(g, iconKind, cx - 28, cy - 78, 56, ACCENT_HI);
+                g.setFont(head(Font.BOLD, 40));
+                g.setColor(TEXT);
                 String s = "WKRÓTCE";
-                g.drawString(s, (getWidth() - g.getFontMetrics().stringWidth(s)) / 2, getHeight() / 2 + 14);
+                g.drawString(s, cx - g.getFontMetrics().stringWidth(s) / 2, cy + 22);
+                g.setFont(body(Font.PLAIN, 14));
+                g.setColor(MUTED);
+                String u2 = "Pracujemy nad tym - zajrzyj w następnej wersji launchera.";
+                g.drawString(u2, cx - g.getFontMetrics().stringWidth(u2) / 2, cy + 52);
                 g.dispose();
             }
         };
@@ -1527,12 +1748,26 @@ public class BushLaunch {
         t.setForeground(TEXT);
         t.setFont(head(Font.BOLD, 34));
         t.setAlignmentX(Component.LEFT_ALIGNMENT);
+        JComponent bar = new JComponent() {
+            @Override
+            protected void paintComponent(Graphics g0) {
+                Graphics2D g = (Graphics2D) g0.create();
+                g.setPaint(new GradientPaint(0, 0, ACCENT_HI, 120, 0, alpha(ACCENT, 0)));
+                g.fillRect(0, 0, 120, 3);
+                g.dispose();
+            }
+        };
+        bar.setPreferredSize(new Dimension(120, 3));
+        bar.setMaximumSize(new Dimension(120, 3));
+        bar.setAlignmentX(Component.LEFT_ALIGNMENT);
         JLabel s = new JLabel(sub);
         s.setForeground(MUTED);
         s.setFont(body(Font.PLAIN, 14));
         s.setAlignmentX(Component.LEFT_ALIGNMENT);
         p.add(t);
-        p.add(javax.swing.Box.createVerticalStrut(4));
+        p.add(javax.swing.Box.createVerticalStrut(6));
+        p.add(bar);
+        p.add(javax.swing.Box.createVerticalStrut(8));
         p.add(s);
         return p;
     }
@@ -2284,9 +2519,12 @@ public class BushLaunch {
         protected void paintComponent(Graphics g0) {
             Graphics2D g = (Graphics2D) g0.create();
             aa(g);
-            Color c = primary ? (hover ? ACCENT_HI : ACCENT) : (hover ? new Color(0x3A2A20) : PANEL_HI);
-            g.setColor(c);
+            Color top = primary ? (hover ? new Color(0xFF8A3D) : new Color(0xF2691A)) : (hover ? new Color(0x40291C) : new Color(0x2E1D14));
+            Color bot = primary ? (hover ? new Color(0xE8590C) : new Color(0xCF4A08)) : (hover ? new Color(0x2E1D14) : new Color(0x22150F));
+            g.setPaint(new GradientPaint(0, 0, top, 0, getHeight(), bot));
             g.fill(cut(0, 0, getWidth(), getHeight(), 10));
+            g.setPaint(new GradientPaint(0, 0, alpha(Color.WHITE, primary ? 60 : 24), 0, getHeight() / 2f, alpha(Color.WHITE, 0)));
+            g.fill(cut(0, 0, getWidth(), getHeight() / 2.0, 10));
             g.dispose();
             super.paintComponent(g0);
         }
@@ -2353,6 +2591,23 @@ public class BushLaunch {
                 g.setColor(color);
                 g.drawOval((int) (x + s * 0.2), (int) (y + s * 0.3 - 4), 8, 8);
                 g.drawOval((int) (x + s * 0.62), (int) (y + s * 0.7 - 4), 8, 8);
+            }
+            case 9 -> {
+                Path2D f = new Path2D.Double();
+                f.moveTo(x, y + s * 0.78);
+                f.lineTo(x, y + s * 0.22);
+                f.lineTo(x + s * 0.38, y + s * 0.22);
+                f.lineTo(x + s * 0.48, y + s * 0.34);
+                f.lineTo(x + s, y + s * 0.34);
+                f.lineTo(x + s, y + s * 0.78);
+                f.closePath();
+                g.draw(f);
+            }
+            case 10 -> {
+                g.draw(new RoundRectangle2D.Double(x + s * 0.1, y + s * 0.1, s * 0.8, s * 0.8, 6, 6));
+                g.drawLine((int) (x + s * 0.28), (int) (y + s * 0.34), (int) (x + s * 0.72), (int) (y + s * 0.34));
+                g.drawLine((int) (x + s * 0.28), (int) (y + s * 0.52), (int) (x + s * 0.72), (int) (y + s * 0.52));
+                g.drawLine((int) (x + s * 0.28), (int) (y + s * 0.70), (int) (x + s * 0.56), (int) (y + s * 0.70));
             }
             default -> {
                 g.draw(new Ellipse2D.Double(x + s * 0.05, y + s * 0.25, s * 0.9, s * 0.5));
