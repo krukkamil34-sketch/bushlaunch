@@ -1,8 +1,14 @@
 package pl.bushstar.bushlaunch;
 
+import com.sun.net.httpserver.HttpExchange;
+import com.sun.net.httpserver.HttpServer;
+
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.InetAddress;
+import java.net.InetSocketAddress;
 import java.net.URI;
+import java.net.URLDecoder;
 import java.net.URLEncoder;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -11,16 +17,26 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.attribute.PosixFilePermissions;
+import java.security.MessageDigest;
+import java.security.NoSuchAlgorithmException;
+import java.security.SecureRandom;
 import java.time.Duration;
+import java.util.Base64;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Properties;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 import java.util.function.BooleanSupplier;
 import java.util.function.Consumer;
 
 /**
- * Logowanie kontem Microsoft (premium) metodą "device code": launcher pokazuje kod, gracz wpisuje go
- * na stronie Microsoftu, a launcher w tle wymienia tokeny: Microsoft -> Xbox Live -> XSTS -> Minecraft.
+ * Logowanie kontem Microsoft (premium). Główna metoda: przeglądarka (OAuth + PKCE, przekierowanie na
+ * localhost) - gracz widzi stronę Microsoftu z wyborem konta. Zapasowa: "device code" (kod do wpisania).
+ * W obu przypadkach launcher w tle wymienia tokeny: Microsoft -> Xbox Live -> XSTS -> Minecraft.
  *
  * Wymaga własnego Client ID aplikacji z Azure (publiczny klient) zatwierdzonego przez Mojang -
  * patrz README. Hasło gracza nigdy nie trafia do launchera; zapisujemy tylko refresh token.
@@ -72,6 +88,8 @@ public final class MicrosoftAuth {
     private static final String JSON = "application/json";
 
     // adresy można podmienić właściwościami systemowymi (używane tylko do testów z fałszywym serwerem)
+    private static final String AUTH_URL = System.getProperty("bushlaunch.url.authorize",
+            "https://login.microsoftonline.com/consumers/oauth2/v2.0/authorize");
     private static final String DEVICE_URL = System.getProperty("bushlaunch.url.device",
             "https://login.microsoftonline.com/consumers/oauth2/v2.0/devicecode");
     private static final String TOKEN_URL = System.getProperty("bushlaunch.url.token",
@@ -108,6 +126,190 @@ public final class MicrosoftAuth {
         } catch (IOException e) {
             return null;
         }
+    }
+
+    // ------------------------------------------------------------------ logowanie w przeglądarce (PKCE)
+
+    /**
+     * Jedno logowanie w przeglądarce: lokalny serwer na 127.0.0.1 odbiera przekierowanie z Microsoftu
+     * (http://localhost:PORT), a kod autoryzacji jest wymieniany na tokeny z weryfikatorem PKCE.
+     * Zamknij obiekt (close) po zakończeniu - zatrzymuje serwer.
+     */
+    public static final class BrowserLogin implements AutoCloseable {
+        private final String clientId;
+        private final String verifier;
+        private final String redirectUri;
+        private final String state;
+        private final String authUrl;
+        private final HttpServer server;
+        private final CompletableFuture<String> code = new CompletableFuture<>();
+
+        private BrowserLogin(String clientId) throws IOException {
+            this.clientId = clientId;
+            SecureRandom rnd = new SecureRandom();
+            this.verifier = randomUrlToken(rnd, 48);
+            this.state = randomUrlToken(rnd, 24);
+            // port wybiera system; Microsoft dla http://localhost ignoruje numer portu
+            this.server = HttpServer.create(new InetSocketAddress(InetAddress.getLoopbackAddress(), 0), 0);
+            this.redirectUri = "http://localhost:" + server.getAddress().getPort();
+            this.authUrl = AUTH_URL + "?" + form("client_id", clientId, "response_type", "code",
+                    "redirect_uri", redirectUri, "response_mode", "query", "scope", SCOPE,
+                    "state", state, "code_challenge", challenge(verifier), "code_challenge_method", "S256",
+                    "prompt", "select_account");
+            server.createContext("/", this::handle);
+            server.start();
+        }
+
+        /** Adres strony logowania Microsoftu (z wyborem konta). */
+        public String authUrl() {
+            return authUrl;
+        }
+
+        private void handle(HttpExchange ex) throws IOException {
+            try {
+                Map<String, String> q = parseQuery(ex.getRequestURI().getRawQuery());
+                if (!"GET".equals(ex.getRequestMethod()) || (!q.containsKey("code") && !q.containsKey("error"))) {
+                    reply(ex, 404, "text/plain; charset=utf-8", "Nie znaleziono.");
+                    return;
+                }
+                if (!state.equals(q.get("state"))) {
+                    // obce lub stare żądanie - ignorujemy, nie przerywamy oczekiwania na właściwe
+                    reply(ex, 400, "text/html; charset=utf-8", page(false, "Nieprawidłowa odpowiedź logowania. "
+                            + "Wróć do launchera i spróbuj jeszcze raz."));
+                    return;
+                }
+                if (q.containsKey("error")) {
+                    String msg = callbackError(q.get("error"), q.get("error_description"));
+                    reply(ex, 200, "text/html; charset=utf-8", page(false, msg));
+                    code.completeExceptionally(new AuthException(msg, false));
+                    return;
+                }
+                reply(ex, 200, "text/html; charset=utf-8", page(true, "Możesz zamknąć tę kartę i wrócić do launchera."));
+                code.complete(q.get("code"));
+            } finally {
+                ex.close();
+            }
+        }
+
+        /** Czeka na zatwierdzenie w przeglądarce i kończy logowanie. Blokuje wątek - wołać poza wątkiem UI. */
+        public Login await(BooleanSupplier cancelled, Consumer<String> status)
+                throws IOException, InterruptedException {
+            status.accept("Czekam na zalogowanie w przeglądarce...");
+            long deadline = System.currentTimeMillis() + TimeUnit.MINUTES.toMillis(5);
+            String authCode;
+            while (true) {
+                if (cancelled.getAsBoolean()) {
+                    throw new CancelledException();
+                }
+                if (System.currentTimeMillis() > deadline) {
+                    throw new AuthException("Minął czas na zalogowanie. Spróbuj jeszcze raz.", false);
+                }
+                try {
+                    authCode = code.get(250, TimeUnit.MILLISECONDS);
+                    break;
+                } catch (TimeoutException e) {
+                    // czekamy dalej
+                } catch (ExecutionException e) {
+                    Throwable c = e.getCause();
+                    if (c instanceof IOException io) {
+                        throw io;
+                    }
+                    throw new IOException(c);
+                }
+            }
+            status.accept("Logowanie do Microsoft...");
+            Resp r = post(TOKEN_URL, FORM, form("client_id", clientId, "grant_type", "authorization_code",
+                    "code", authCode, "redirect_uri", redirectUri, "code_verifier", verifier, "scope", SCOPE));
+            String access = Json.str(r.json().get("access_token"));
+            if (r.status() != 200 || access == null) {
+                throw new AuthException(oauthError(r), false);
+            }
+            return exchange(access, Json.str(r.json().get("refresh_token")), status);
+        }
+
+        @Override
+        public void close() {
+            server.stop(0);
+        }
+    }
+
+    /** Uruchamia lokalny serwer i przygotowuje adres logowania. Rzuca IOException, gdy nie da się go uruchomić. */
+    public static BrowserLogin startBrowserLogin(String clientId) throws IOException {
+        return new BrowserLogin(clientId);
+    }
+
+    private static String randomUrlToken(SecureRandom rnd, int bytes) {
+        byte[] b = new byte[bytes];
+        rnd.nextBytes(b);
+        return Base64.getUrlEncoder().withoutPadding().encodeToString(b);
+    }
+
+    private static String challenge(String verifier) {
+        try {
+            byte[] h = MessageDigest.getInstance("SHA-256").digest(verifier.getBytes(StandardCharsets.US_ASCII));
+            return Base64.getUrlEncoder().withoutPadding().encodeToString(h);
+        } catch (NoSuchAlgorithmException e) {
+            throw new IllegalStateException(e);
+        }
+    }
+
+    private static Map<String, String> parseQuery(String raw) {
+        Map<String, String> out = new HashMap<>();
+        if (raw == null || raw.isEmpty()) {
+            return out;
+        }
+        for (String part : raw.split("&")) {
+            int i = part.indexOf('=');
+            String k = i < 0 ? part : part.substring(0, i);
+            String v = i < 0 ? "" : part.substring(i + 1);
+            out.put(URLDecoder.decode(k, StandardCharsets.UTF_8), URLDecoder.decode(v, StandardCharsets.UTF_8));
+        }
+        return out;
+    }
+
+    private static void reply(HttpExchange ex, int status, String type, String body) throws IOException {
+        byte[] b = body.getBytes(StandardCharsets.UTF_8);
+        ex.getResponseHeaders().set("Content-Type", type);
+        ex.getResponseHeaders().set("Cache-Control", "no-store");
+        ex.getResponseHeaders().set("Connection", "close");
+        ex.sendResponseHeaders(status, b.length);
+        try (java.io.OutputStream out = ex.getResponseBody()) {
+            out.write(b);
+        }
+    }
+
+    private static String callbackError(String err, String desc) {
+        String first = desc == null ? "" : desc.split("\\r?\\n")[0];
+        String all = (err == null ? "" : err) + " " + (desc == null ? "" : desc);
+        if ("access_denied".equals(err)) {
+            return "Logowanie zostało anulowane lub odrzucone.";
+        }
+        if (all.contains("AADSTS50011") || all.contains("redirect_uri")) {
+            return "Aplikacja Azure nie ma adresu przekierowania http://localhost. W Azure: Authentication -> "
+                    + "Add a platform -> Mobile and desktop applications -> http://localhost. (" + first + ")";
+        }
+        if (all.contains("AADSTS700016") || all.contains("invalid_client")) {
+            return "Nieprawidłowy Client ID aplikacji Microsoft. (" + first + ")";
+        }
+        return first.isEmpty() ? "Microsoft zwrócił błąd: " + err : "Microsoft: " + first;
+    }
+
+    /** Strona wyświetlana w przeglądarce po powrocie z logowania. */
+    private static String page(boolean ok, String text) {
+        String color = ok ? "#ff7a1f" : "#ff6b5a";
+        String title = ok ? "Zalogowano!" : "Nie udało się zalogować";
+        String safe = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;");
+        return "<!doctype html><html lang=\"pl\"><head><meta charset=\"utf-8\"><title>BushLaunch</title>"
+                + "<meta name=\"viewport\" content=\"width=device-width,initial-scale=1\"><style>"
+                + "html,body{height:100%;margin:0}body{display:flex;align-items:center;justify-content:center;"
+                + "background:radial-gradient(circle at 50% 35%,#2a160c,#0c0807 65%);color:#f4eeea;"
+                + "font-family:Inter,'Segoe UI',system-ui,sans-serif}"
+                + ".c{max-width:420px;text-align:center;padding:40px 36px;border:1px solid #34251d;border-radius:18px;"
+                + "background:linear-gradient(#1f1511,#150e0b);box-shadow:0 20px 60px rgba(0,0,0,.5)}"
+                + "h1{margin:14px 0 8px;font-size:26px;color:" + color + "}p{margin:0;color:#9c8f89;line-height:1.5}"
+                + ".b{font-size:20px;font-weight:700;letter-spacing:.3px}.b span{color:#ff7a1f}"
+                + "</style></head><body><div class=\"c\"><div class=\"b\"><span>Bush</span>Launch</div>"
+                + "<h1>" + title + "</h1><p>" + safe + "</p></div></body></html>";
     }
 
     // ------------------------------------------------------------------ logowanie (device code)
@@ -279,6 +481,10 @@ public final class MicrosoftAuth {
         if (all.contains("AADSTS70002") || all.contains("AADSTS70043") || all.contains("unauthorized_client")) {
             return "Aplikacja Azure nie ma włączonych publicznych przepływów klienta. W Azure: Authentication -> "
                     + "Allow public client flows = Yes. (" + first + ")";
+        }
+        if (all.contains("AADSTS50011")) {
+            return "Aplikacja Azure nie ma adresu przekierowania http://localhost (Authentication -> Mobile and "
+                    + "desktop applications). (" + first + ")";
         }
         if (all.contains("AADSTS700016") || all.contains("invalid_client")) {
             return "Nieprawidłowy Client ID aplikacji Microsoft (msClientId). (" + first + ")";

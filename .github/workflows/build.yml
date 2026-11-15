@@ -39,7 +39,9 @@ jobs:
         shell: pwsh
         run: |
           New-Item -ItemType Directory -Force src\main\resources | Out-Null
-          "clientId=${{ vars.MS_CLIENT_ID }}" | Out-File -Encoding ascii src\main\resources\auth.properties
+          $id = "${{ vars.MS_CLIENT_ID }}"
+          if (-not $id) { $id = "a33244ce-944d-4cf7-81c4-b5893f5668e4" }
+          "clientId=$id" | Out-File -Encoding ascii src\main\resources\auth.properties
 
       # target/BushLaunch.exe - jeden plik, uruchamiany dwuklikiem (wymaga Javy 17+)
       - name: Build BushLaunch.exe (jar + launch4j)

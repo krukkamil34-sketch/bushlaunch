@@ -84,12 +84,12 @@ import java.util.stream.Stream;
 
 /**
  * BushLaunch - launcher Minecraft by BushStar.
- * Pobiera wybraną wersję gry z serwerów Mojang i ją uruchamia (tryb offline, sam nick).
+ * Pobiera wybraną wersję gry z serwerów Mojang i ją uruchamia (wymaga konta Microsoft z Minecraftem Java).
  * Wygląd: ciemny launcher w stylu Fire Client (pasek boczny, scena ze skinem, duży przycisk GRAJ).
  */
 public class BushLaunch {
 
-    public static final String LAUNCHER_VERSION = "0.5.0";
+    public static final String LAUNCHER_VERSION = "0.7.0";
 
     /** Link do Discorda BushStar - podmień na swój zaproszeniowy. */
     private static final String DISCORD_URL = "https://discord.gg/";
@@ -221,10 +221,10 @@ public class BushLaunch {
     private final Map<String, VersionEntry> versionIndex = new LinkedHashMap<>();
     private String activeProfileId = "";
     private volatile MicrosoftAuth.Account msAccount;
-    private boolean msMode;
     private String nick = "";
     private int ramMb = 2048;
     private boolean showAll;
+    private JLabel lockerName;
 
     private boolean loadingVersions = true;
     private boolean busy;
@@ -280,7 +280,6 @@ public class BushLaunch {
 
     private void show() {
         loadConfig();
-        nick = config.getProperty("username", "");
         loadAccount();
         showAll = Boolean.parseBoolean(config.getProperty("showAll", "false"));
         try {
@@ -502,10 +501,10 @@ public class BushLaunch {
                 drawHead(g, skin, 12, 11, 42);
                 g.setFont(body(Font.BOLD, 15));
                 g.setColor(TEXT);
-                g.drawString(nick.isEmpty() ? "Ustaw nick" : nick, 64, 29);
+                g.drawString(nick.isEmpty() ? "Zaloguj się" : nick, 64, 29);
                 g.setFont(body(Font.PLAIN, 12));
                 g.setColor(busy ? ACCENT_HI : MUTED);
-                g.drawString(busy ? "Przygotowanie..." : (isMicrosoft() ? "Konto Microsoft" : "Konto offline"), 64, 47);
+                g.drawString(busy ? "Przygotowanie..." : (isMicrosoft() ? "Konto Microsoft" : "Nie zalogowano"), 64, 47);
                 g.setColor(MUTED);
                 g.setStroke(new BasicStroke(1.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
                 int cx = w - 18;
@@ -686,7 +685,7 @@ public class BushLaunch {
                 {"v" + LAUNCHER_VERSION, "Logowanie kontem Microsoft"},
                 {"Profile", "Własne profile i zmiana ich wersji gry"},
                 {"Wersje", "Wszystkie wydania i snapshoty Mojang"},
-                {"Offline", "Możesz też grać samym nickiem"},
+                {"Premium", "Wymagane konto Microsoft"},
                 {"Wkrótce", "Fabric, Forge i skiny"}});
 
         JPanel actions = new JPanel(new GridLayout(3, 1, 0, 10));
@@ -926,7 +925,7 @@ public class BushLaunch {
             g.fillRect(0, 0, w, barY);
 
             // tabliczka z nickiem
-            String tag = nick.isEmpty() ? "Ustaw nick" : nick;
+            String tag = nick.isEmpty() ? "Zaloguj się" : nick;
             g.setFont(head(Font.BOLD, 26));
             FontMetrics fm = g.getFontMetrics();
             int tw = fm.stringWidth(tag) + 44;
@@ -2018,33 +2017,22 @@ public class BushLaunch {
         title.setForeground(TEXT);
         title.setFont(head(Font.BOLD, 34));
         title.setAlignmentX(Component.LEFT_ALIGNMENT);
-        JLabel sub = new JLabel("<html>Skin jest pobierany z Mojang po nicku.<br>Skiny premium są widoczne tylko tutaj.</html>");
+        JLabel sub = new JLabel("<html>Skin jest pobierany z Twojego konta Microsoft.<br>Zmienisz go na minecraft.net.</html>");
         sub.setForeground(MUTED);
         sub.setFont(body(Font.PLAIN, 13));
         sub.setAlignmentX(Component.LEFT_ALIGNMENT);
-        JLabel lab = new JLabel("Nick");
+        JLabel lab = new JLabel("Konto");
         lab.setForeground(TEXT);
         lab.setFont(body(Font.PLAIN, 14));
         lab.setAlignmentX(Component.LEFT_ALIGNMENT);
-        JTextField f = field(nick);
-        f.setAlignmentX(Component.LEFT_ALIGNMENT);
-        f.setMaximumSize(new Dimension(Integer.MAX_VALUE, 40));
-        FlatButton save = new FlatButton("Zapisz nick", true);
-        save.setAlignmentX(Component.LEFT_ALIGNMENT);
-        JLabel err = new JLabel(" ");
-        err.setForeground(new Color(0xFF6B5A));
-        err.setFont(body(Font.PLAIN, 12));
-        err.setAlignmentX(Component.LEFT_ALIGNMENT);
-        save.addActionListener(e -> {
-            String n = f.getText().trim();
-            if (!validNick(n)) {
-                err.setText("Nick musi mieć 3-16 znaków: litery, cyfry lub _");
-                return;
-            }
-            err.setText(" ");
-            setNick(n);
-            preview.repaint();
-        });
+        JLabel who = new JLabel(nick.isEmpty() ? "Nie zalogowano" : nick);
+        who.setForeground(ACCENT_HI);
+        who.setFont(head(Font.BOLD, 22));
+        who.setAlignmentX(Component.LEFT_ALIGNMENT);
+        lockerName = who;
+        FlatButton account = new FlatButton("Konto Microsoft", true);
+        account.setAlignmentX(Component.LEFT_ALIGNMENT);
+        account.addActionListener(e -> openAccountDialog());
 
         form.add(title);
         form.add(javax.swing.Box.createVerticalStrut(8));
@@ -2052,11 +2040,9 @@ public class BushLaunch {
         form.add(javax.swing.Box.createVerticalStrut(26));
         form.add(lab);
         form.add(javax.swing.Box.createVerticalStrut(6));
-        form.add(f);
-        form.add(javax.swing.Box.createVerticalStrut(6));
-        form.add(err);
-        form.add(javax.swing.Box.createVerticalStrut(10));
-        form.add(save);
+        form.add(who);
+        form.add(javax.swing.Box.createVerticalStrut(16));
+        form.add(account);
 
         p.add(preview, BorderLayout.CENTER);
         p.add(form, BorderLayout.EAST);
@@ -2264,96 +2250,36 @@ public class BushLaunch {
         return n != null && n.matches("[A-Za-z0-9_]{3,16}");
     }
 
-    private void askNick(Runnable after) {
-        JPanel body = new JPanel(new BorderLayout(0, 8));
-        JDialog d = makeDialog("Zmień konto", body, 420, 250);
-
-        JLabel info = new JLabel("Nick (3-16 znaków: litery, cyfry lub _)");
-        info.setForeground(MUTED);
-        info.setFont(body(Font.PLAIN, 13));
-        JTextField f = field(nick);
-        JLabel err = new JLabel(" ");
-        err.setForeground(new Color(0xFF6B5A));
-        err.setFont(body(Font.PLAIN, 12));
-        FlatButton ok = new FlatButton("Zapisz", true);
-
-        JPanel mid = new JPanel(new BorderLayout(0, 8));
-        mid.setOpaque(false);
-        mid.add(info, BorderLayout.NORTH);
-        mid.add(f, BorderLayout.CENTER);
-        mid.add(err, BorderLayout.SOUTH);
-        JPanel south = new JPanel(new BorderLayout());
-        south.setOpaque(false);
-        south.add(ok, BorderLayout.EAST);
-        body.add(mid, BorderLayout.NORTH);
-        body.add(south, BorderLayout.SOUTH);
-
-        final boolean[] saved = {false};
-        Runnable submit = () -> {
-            String n = f.getText().trim();
-            if (!validNick(n)) {
-                err.setText("Nick musi mieć 3-16 znaków: litery, cyfry lub _");
-                return;
-            }
-            setNick(n);
-            saved[0] = true;
-            d.dispose();
-        };
-        ok.addActionListener(e -> submit.run());
-        f.addActionListener(e -> submit.run());
-        SwingUtilities.invokeLater(f::requestFocusInWindow);
-        d.setVisible(true);
-        if (saved[0] && after != null) {
-            after.run();
-        }
-    }
-
-    private void setNick(String n) {
-        config.setProperty("username", n);
-        saveConfig();
-        if (!isMicrosoft()) {
-            nick = n;
-            skin = null;
-            loadSkinAsync();
-            frame.repaint();
-        }
-    }
-
-    // ------------------------------------------------------------------ konto (offline / Microsoft)
+    // ------------------------------------------------------------------ konto (tylko Microsoft)
 
     private boolean isMicrosoft() {
-        return msMode && msAccount != null;
+        return msAccount != null;
     }
 
-    /** Client ID aplikacji Azure: z config.properties (msClientId) albo wbudowany podczas budowania. */
+    /** Client ID: najpierw ukryte pole msClientId w config.properties (jeśli ustawione), potem wbudowane. */
     private String msClientId() {
-        String c = config.getProperty("msClientId", "").trim();
-        return c.isEmpty() ? MicrosoftAuth.bundledClientId() : c;
+        String custom = config.getProperty("msClientId", "").trim();
+        return custom.isEmpty() ? MicrosoftAuth.bundledClientId() : custom;
     }
 
     private void loadAccount() {
         msAccount = MicrosoftAuth.loadAccount(baseDir);
-        msMode = msAccount != null && "microsoft".equals(config.getProperty("accountMode", ""));
-        nick = msMode ? msAccount.name() : config.getProperty("username", "");
+        nick = msAccount != null ? msAccount.name() : "";
     }
 
     private void applyAccount() {
-        nick = isMicrosoft() ? msAccount.name() : config.getProperty("username", "");
+        nick = msAccount != null ? msAccount.name() : "";
         skin = null;
         loadSkinAsync();
+        if (lockerName != null) {
+            lockerName.setText(nick.isEmpty() ? "Nie zalogowano" : nick);
+        }
         if (sidebarUser != null) {
             sidebarUser.repaint();
         }
         if (frame != null) {
             frame.repaint();
         }
-    }
-
-    private void setMsMode(boolean on) {
-        msMode = on && msAccount != null;
-        config.setProperty("accountMode", msMode ? "microsoft" : "offline");
-        saveConfig();
-        applyAccount();
     }
 
     private static JLabel htmlLabel(String text, Color color, int size, int style) {
@@ -2372,8 +2298,13 @@ public class BushLaunch {
         return b;
     }
 
-    /** Okno konta: konto offline (sam nick) albo logowanie przez Microsoft (kod urządzenia). */
+    /** Okno konta: logowanie przez Microsoft (przeglądarka, zapasowo kod). */
     private void openAccountDialog() {
+        openAccountDialog(null);
+    }
+
+    /** afterLogin: co zrobić po udanym zalogowaniu (np. dokończyć kliknięcie GRAJ). */
+    private void openAccountDialog(Runnable afterLogin) {
         if (busy) {
             return;
         }
@@ -2421,6 +2352,13 @@ public class BushLaunch {
                 openUrl(currentUri[0]);
             }
         });
+        final JLabel intro = htmlLabel("Otworzyłem przeglądarkę.", MUTED, 13, Font.PLAIN);
+        final Runnable[] viaCodeAction = {null};
+        FlatButton viaCode = wideButton("Nie działa? Zaloguj kodem", false, () -> {
+            if (viaCodeAction[0] != null) {
+                viaCodeAction[0].run();
+            }
+        });
         FlatButton copyCode = wideButton("Kopiuj kod", false, () -> {
             if (currentCode[0] != null) {
                 java.awt.Toolkit.getDefaultToolkit().getSystemClipboard()
@@ -2432,8 +2370,7 @@ public class BushLaunch {
         back.setMaximumSize(new Dimension(Integer.MAX_VALUE, back.getPreferredSize().height));
         login.add(loginTitle);
         login.add(javax.swing.Box.createVerticalStrut(8));
-        login.add(htmlLabel("Wejdź na stronę poniżej i wpisz ten kod. Okno zamknie się samo po zalogowaniu.",
-                MUTED, 13, Font.PLAIN));
+        login.add(intro);
         login.add(javax.swing.Box.createVerticalStrut(10));
         login.add(codeLabel);
         login.add(uriLabel);
@@ -2441,6 +2378,7 @@ public class BushLaunch {
         login.add(openPage);
         login.add(javax.swing.Box.createVerticalStrut(8));
         login.add(copyCode);
+        login.add(viaCode);
         login.add(javax.swing.Box.createVerticalStrut(12));
         login.add(status);
         login.add(javax.swing.Box.createVerticalGlue());
@@ -2456,30 +2394,29 @@ public class BushLaunch {
 
         final Runnable[] build = new Runnable[1];
 
-        Runnable startLogin = () -> {
+        final java.util.function.Consumer<Boolean>[] flowRef = new java.util.function.Consumer[1];
+
+        // device = false: logowanie w przeglądarce (wybór konta Microsoft, powrót na localhost)
+        // device = true: zapasowo kod do wpisania na stronie Microsoftu
+        java.util.function.Consumer<Boolean> flow = device -> {
             String cid = msClientId();
             if (cid == null || cid.isBlank()) {
-                String entered = JOptionPane.showInputDialog(frame,
-                        "Wklej Application (client) ID aplikacji Microsoft.\n\n"
-                                + "Utwórz aplikację w Azure Portal, włącz Allow public client flows, "
-                                + "a następnie zatwierdź Client ID przez Mojang.\n"
-                                + "ID zostanie zapisane lokalnie w config.properties.",
-                        "Konfiguracja logowania Microsoft", JOptionPane.QUESTION_MESSAGE);
-                if (entered == null) {
-                    return;
-                }
-                entered = entered.trim();
-                if (entered.isEmpty()) {
-                    err.setText("<html><body style='width:400px'>Client ID nie może być pusty.</body></html>");
-                    return;
-                }
-                config.setProperty("msClientId", entered);
-                saveConfig();
-                cid = entered;
+                err.setText("<html><body style='width:400px'>Logowanie Microsoft nie jest jeszcze skonfigurowane przez właściciela BushLaunch. Spróbuj ponownie później.</body></html>");
+                appendLog("Brak wbudowanego Client ID. Właściciel musi ustawić MS_CLIENT_ID podczas budowania launchera.");
+                return;
             }
             final String clientId = cid;
             err.setText(" ");
             final int my = ++gen[0];
+            codeLabel.setVisible(device);
+            uriLabel.setVisible(device);
+            copyCode.setVisible(device);
+            viaCode.setVisible(!device);
+            openPage.setText(device ? "Otwórz stronę logowania" : "Otwórz przeglądarkę ponownie");
+            intro.setText("<html><body style='width:400px'>" + (device
+                    ? "Wejdź na stronę poniżej i wpisz ten kod. Okno zamknie się samo po zalogowaniu."
+                    : "Otworzyłem przeglądarkę - wybierz konto Microsoft i zatwierdź logowanie. "
+                    + "Okno zamknie się samo po zalogowaniu.") + "</body></html>");
             codeLabel.setText("...");
             uriLabel.setText(" ");
             status.setForeground(MUTED);
@@ -2489,29 +2426,53 @@ public class BushLaunch {
             currentUri[0] = null;
             cl.show(body, "login");
             java.util.function.BooleanSupplier cancelled = () -> closed[0] || gen[0] != my;
+            java.util.function.Consumer<String> statusSink = s2 -> SwingUtilities.invokeLater(() -> {
+                if (!cancelled.getAsBoolean()) {
+                    status.setText(s2);
+                }
+            });
             Thread t = new Thread(() -> {
                 try {
-                    MicrosoftAuth.DeviceCode dc = MicrosoftAuth.startDeviceLogin(clientId);
-                    SwingUtilities.invokeLater(() -> {
-                        if (cancelled.getAsBoolean()) {
+                    MicrosoftAuth.Login l;
+                    if (device) {
+                        MicrosoftAuth.DeviceCode dc = MicrosoftAuth.startDeviceLogin(clientId);
+                        SwingUtilities.invokeLater(() -> {
+                            if (cancelled.getAsBoolean()) {
+                                return;
+                            }
+                            currentCode[0] = dc.userCode();
+                            String loginUrl = dc.verificationUriComplete() != null
+                                    && !dc.verificationUriComplete().isBlank()
+                                    ? dc.verificationUriComplete() : dc.verificationUri();
+                            currentUri[0] = loginUrl;
+                            codeLabel.setText(dc.userCode());
+                            uriLabel.setText(loginUrl);
+                            status.setText("Otwieram stronę logowania Microsoft...");
+                            openUrl(loginUrl);
+                        });
+                        l = MicrosoftAuth.pollLogin(clientId, dc, cancelled, statusSink);
+                    } else {
+                        MicrosoftAuth.BrowserLogin bl;
+                        try {
+                            bl = MicrosoftAuth.startBrowserLogin(clientId);
+                        } catch (IOException ex) {
+                            // nie da się uruchomić lokalnego serwera (np. zapora) - przechodzimy na kod
+                            appendLog("Logowanie w przeglądarce niedostępne (" + ex.getMessage() + "), używam kodu.");
+                            SwingUtilities.invokeLater(() -> flowRef[0].accept(true));
                             return;
                         }
-                        currentCode[0] = dc.userCode();
-                        String loginUrl = dc.verificationUriComplete() != null
-                                && !dc.verificationUriComplete().isBlank()
-                                ? dc.verificationUriComplete() : dc.verificationUri();
-                        currentUri[0] = loginUrl;
-                        codeLabel.setText(dc.userCode());
-                        uriLabel.setText(loginUrl);
-                        status.setText("Otwieram stronę logowania Microsoft...");
-                        openUrl(loginUrl);
-                    });
-                    MicrosoftAuth.Login l = MicrosoftAuth.pollLogin(clientId, dc, cancelled,
-                            s -> SwingUtilities.invokeLater(() -> {
-                                if (!cancelled.getAsBoolean()) {
-                                    status.setText(s);
+                        try (bl) {
+                            SwingUtilities.invokeLater(() -> {
+                                if (cancelled.getAsBoolean()) {
+                                    return;
                                 }
-                            }));
+                                currentUri[0] = bl.authUrl();
+                                status.setText("Czekam na zalogowanie w przeglądarce...");
+                                openUrl(bl.authUrl());
+                            });
+                            l = bl.await(cancelled, statusSink);
+                        }
+                    }
                     if (cancelled.getAsBoolean()) {
                         return;
                     }
@@ -2519,9 +2480,12 @@ public class BushLaunch {
                     MicrosoftAuth.saveAccount(baseDir, acc);
                     SwingUtilities.invokeLater(() -> {
                         msAccount = acc;
-                        setMsMode(true);
+                        applyAccount();
                         appendLog("Zalogowano kontem Microsoft: " + acc.name());
                         d.dispose();
+                        if (afterLogin != null) {
+                            afterLogin.run();
+                        }
                     });
                 } catch (MicrosoftAuth.CancelledException ignored) {
                     // gracz anulował
@@ -2541,6 +2505,9 @@ public class BushLaunch {
             t.setDaemon(true);
             t.start();
         };
+        flowRef[0] = flow;
+        viaCodeAction[0] = () -> flow.accept(true);
+        Runnable startLogin = () -> flow.accept(false);
         back.addActionListener(e -> {
             gen[0]++;
             cl.show(body, "account");
@@ -2557,10 +2524,10 @@ public class BushLaunch {
                     drawHead(g, skin, 12, 14, 44);
                     g.setFont(body(Font.BOLD, 17));
                     g.setColor(TEXT);
-                    g.drawString(fit(g, nick.isEmpty() ? "Brak nicku" : nick, getWidth() - 90), 68, 34);
+                    g.drawString(fit(g, nick.isEmpty() ? "Gość" : nick, getWidth() - 90), 68, 34);
                     g.setFont(body(Font.PLAIN, 13));
                     g.setColor(MUTED);
-                    g.drawString(isMicrosoft() ? "Konto Microsoft (premium)" : "Konto offline (sam nick)", 68, 54);
+                    g.drawString(isMicrosoft() ? "Konto Microsoft (premium)" : "Nie zalogowano", 68, 54);
                     g.dispose();
                 }
             };
@@ -2573,34 +2540,17 @@ public class BushLaunch {
             if (isMicrosoft()) {
                 account.add(wideButton("Zmień konto Microsoft", true, startLogin));
                 account.add(javax.swing.Box.createVerticalStrut(8));
-                account.add(wideButton("Graj offline (sam nick)", false, () -> {
-                    d.dispose();
-                    askNick(() -> setMsMode(false));
-                }));
-            } else {
-                if (msAccount != null) {
-                    account.add(wideButton("Użyj konta Microsoft (" + msAccount.name() + ")", true, () -> {
-                        setMsMode(true);
-                        d.dispose();
-                    }));
-                    account.add(javax.swing.Box.createVerticalStrut(8));
-                }
-                account.add(wideButton(msAccount != null ? "Zaloguj innym kontem Microsoft"
-                        : "Zaloguj przez Microsoft", msAccount == null, startLogin));
-                account.add(javax.swing.Box.createVerticalStrut(8));
-                account.add(wideButton("Zmień nick offline", false, () -> {
-                    d.dispose();
-                    askNick(null);
-                }));
-            }
-            if (msAccount != null) {
-                account.add(javax.swing.Box.createVerticalStrut(8));
-                account.add(wideButton("Wyloguj z Microsoft", false, () -> {
+                account.add(wideButton("Wyloguj", false, () -> {
                     MicrosoftAuth.deleteAccount(baseDir);
                     msAccount = null;
-                    setMsMode(false);
+                    applyAccount();
                     build[0].run();
                 }));
+            } else {
+                account.add(htmlLabel("Do gry potrzebne jest konto Microsoft z Minecraftem Java Edition.",
+                        MUTED, 13, Font.PLAIN));
+                account.add(javax.swing.Box.createVerticalStrut(12));
+                account.add(wideButton("Zaloguj przez Microsoft", true, startLogin));
             }
             account.add(javax.swing.Box.createVerticalStrut(10));
             account.add(err);
@@ -3077,8 +3027,8 @@ public class BushLaunch {
         if (busy || loadingVersions) {
             return;
         }
-        if (!isMicrosoft() && !validNick(nick)) {
-            askNick(this::onPlay);
+        if (!isMicrosoft()) {
+            openAccountDialog(this::onPlay);
             return;
         }
         if (selected == null) {
@@ -3094,9 +3044,6 @@ public class BushLaunch {
         if (ap != null) {
             ap.used = System.currentTimeMillis();
         }
-        if (acc == null) {
-            config.setProperty("username", name);
-        }
         config.setProperty("version", version.id());
         config.setProperty("ram", String.valueOf(ram));
         config.setProperty("showAll", String.valueOf(showAll));
@@ -3111,10 +3058,13 @@ public class BushLaunch {
     private void runGame(VersionEntry version, String name, int ram, MicrosoftAuth.Account acc) {
         try {
             GameInstaller.Session session;
-            if (acc != null) {
+            if (acc == null) {
+                throw new IOException("Zaloguj się kontem Microsoft, żeby zagrać.");
+            }
+            {
                 String cid = msClientId();
                 if (cid == null || cid.isBlank()) {
-                    throw new IOException("Brak Client ID aplikacji Microsoft (msClientId w config.properties).");
+                    throw new IOException("Brak konfiguracji logowania Microsoft. Właściciel musi wbudować Client ID podczas budowania launchera.");
                 }
                 appendLog("Odświeżanie sesji Microsoft...");
                 MicrosoftAuth.Login l = MicrosoftAuth.refresh(cid, acc, this::appendLog);
@@ -3122,8 +3072,6 @@ public class BushLaunch {
                 MicrosoftAuth.saveAccount(baseDir, fresh);
                 msAccount = fresh;
                 session = new GameInstaller.Session(l.name(), l.uuid(), l.mcToken(), "msa");
-            } else {
-                session = GameInstaller.Session.offline(name);
             }
 
             GameInstaller.Prepared prepared = installer.install(version);

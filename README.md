@@ -2,12 +2,12 @@
 
 Launcher Minecraft by BushStar (Java, Swing).
 
-**Wersja 0.5.0** - wybierasz profil (wersję), wpisujesz nick i klikasz **GRAJ**. Launcher sam pobiera grę
+**Wersja 0.7.0** - wybierasz profil (wersję), wpisujesz nick i klikasz **GRAJ**. Launcher sam pobiera grę
 (klient, biblioteki, assets) z serwerów Mojang i ją uruchamia.
 
 - **profile**: tworzysz własne profile (nazwa + wersja gry), zmieniasz im wersję, duplikujesz i usuwasz; zapisują się w `config.properties`
 - lista wszystkich wersji z oficjalnego manifestu Mojang (domyślnie tylko release, snapshoty po zaznaczeniu)
-- logowanie kontem **Microsoft** (premium, kod w przeglądarce, sesja zapamiętana) albo tryb offline (sam nick)
+- logowanie kontem **Microsoft** (tylko konta premium, w przeglądarce z wyborem konta, sesja zapamiętana); trybu offline już nie ma
 - ustawienie RAM-u, pasek postępu, log gry w oknie
 - dane w `%APPDATA%\.bushlaunch` (gra, wersje, biblioteki, assets, `config.properties`)
 - sam dobiera Javę do wersji gry
@@ -16,25 +16,32 @@ Nie obsługuje jeszcze: modów/Forge/Fabric i własnych skinów.
 
 ## Konta Microsoft (serwery premium)
 
-Kliknij swoje konto w lewym dolnym rogu → **Zaloguj przez Microsoft**. Launcher pokaże kod i otworzy
-stronę Microsoftu; po wpisaniu kodu okno samo się zamknie, a launcher zapamięta sesję (refresh token
+Kliknij swoje konto w lewym dolnym rogu → **Zaloguj przez Microsoft**. Launcher otworzy przeglądarkę
+na stronie Microsoftu z wyborem konta; po zatwierdzeniu przeglądarka wróci na adres `localhost`, okno
+launchera samo się zamknie, a launcher zapamięta sesję (refresh token
 w `%APPDATA%\.bushlaunch\microsoft.properties`, hasło nigdy nie trafia do launchera). Można w każdej
-chwili przełączyć się na grę offline albo się wylogować.
+chwili zmienić konto albo się wylogować. Bez zalogowania przycisk GRAJ otwiera okno logowania. Gdyby przeglądarka nie zadziałała (np. zapora
+blokuje lokalny port), jest zapasowa opcja **Nie działa? Zaloguj kodem** - kod wpisuje się na stronie
+Microsoftu.
 
-**Jednorazowa konfiguracja (właściciel launchera)** - potrzebny własny Client ID aplikacji:
+**Konfiguracja logowania (tylko właściciel launchera)** - gracz nie wpisuje żadnego Client ID. Launcher ma je wbudowane podczas kompilacji. Potrzebny jest własny Client ID aplikacji:
 
 1. [Azure Portal](https://portal.azure.com) → *App registrations* → *New registration*. Nazwa dowolna
-   (bez słów „Minecraft” i „Mojang”), konta: **Personal Microsoft accounts only**, Redirect URI puste.
-2. W *Authentication* włącz **Allow public client flows = Yes** i zapisz.
+   (bez słów „Minecraft” i „Mojang”), konta: **Personal Microsoft accounts only**.
+2. W *Authentication* kliknij *Add a platform* → **Mobile and desktop applications** i dodaj adres
+   przekierowania `http://localhost` (bez portu i bez ukośnika - port jest losowy, Microsoft go ignoruje).
+   Dodatkowo włącz **Allow public client flows = Yes** (potrzebne dla zapasowego logowania kodem) i zapisz.
 3. Skopiuj **Application (client) ID**.
 4. Zgłoś ten Client ID do Mojangu na https://aka.ms/mce-reviewappid i poczekaj na akceptację (zwykle
    do tygodnia). Dopóki jej nie ma, logowanie kończy się błędem „Invalid app registration”.
-5. Wklej Client ID przy pierwszym kliknięciu „Zaloguj przez Microsoft” - launcher sam zapisze go w `%APPDATA%\.bushlaunch\config.properties`. Możesz też ustawić go ręcznie. Jedno z dwóch:
-   - GitHub: *Settings → Secrets and variables → Actions → Variables → New variable* `MS_CLIENT_ID`
-     (workflow wbuduje go w jar), albo
-   - lokalnie: linijka `msClientId=TWOJ-CLIENT-ID` w `%APPDATA%\.bushlaunch\config.properties`.
+5. W repozytorium GitHub otwórz *Settings → Secrets and variables → Actions → Variables → New repository variable* i ustaw nazwę `MS_CLIENT_ID`, a jako wartość wklej Client ID (opcjonalne - domyślnie wbudowane jest `a33244ce-944d-4cf7-81c4-b5893f5668e4`). Workflow wbuduje go do launchera. Przy kompilacji lokalnej utwórz plik `src/main/resources/auth.properties` z zawartością `clientId=TWOJ-CLIENT-ID`.
 
-Client ID jest publiczny (nie jest sekretem), więc może być wbudowany w jar.
+**Ukryte nadpisanie Client ID (dla zaawansowanych):** w `%APPDATA%\\.bushlaunch\\config.properties` można dopisać linię
+`msClientId=TWOJ-CLIENT-ID`. Wtedy launcher używa tego ID zamiast wbudowanego (bez przebudowywania). Aplikacja
+musi mieć dodany adres `http://localhost` (Mobile and desktop applications) i być zatwierdzona przez Mojang.
+Używaj tylko własnego ID albo takiego, na które masz zgodę właściciela.
+
+Gracz nie zobaczy ani nie wpisze Client ID. Kliknięcie „Zaloguj przez Microsoft” otworzy przeglądarkę na stronie Microsoft, a launcher sam dokończy logowanie po zatwierdzeniu. Client ID jest identyfikatorem publicznym aplikacji, a nie hasłem ani sekretem.
 
 ## Pobieranie (Windows)
 
@@ -68,15 +75,15 @@ Adres aktualizacji wstawia workflow (z nazwy repozytorium); w buildzie lokalnym 
 mvn package
 ```
 
-Powstaje `target/BushLaunch-0.5.0.jar` oraz `target/BushLaunch.exe`. Wymagana Java 17+ i Maven.
+Powstaje `target/BushLaunch-0.7.0.jar` oraz `target/BushLaunch.exe`. Wymagana Java 17+ i Maven.
 
 Instalator (Windows, JDK 21 + [Inno Setup 6](https://jrsoftware.org/isdl.php)):
 
 ```
 jlink --module-path "%JAVA_HOME%\jmods" --add-modules ALL-MODULE-PATH --output runtime --strip-debug --no-header-files --no-man-pages --compress zip-6
-mkdir input && copy target\BushLaunch-0.5.0.jar input\
-jpackage --type app-image --name BushLaunch --app-version 0.5.0 --vendor BushStar --input input --main-jar BushLaunch-0.5.0.jar --main-class pl.bushstar.bushlaunch.BushLaunch --runtime-image runtime --icon installer\bushlaunch.ico --dest dist
-iscc /DAppVersion=0.5.0 installer\BushLaunch.iss
+mkdir input && copy target\BushLaunch-0.7.0.jar input\
+jpackage --type app-image --name BushLaunch --app-version 0.7.0 --vendor BushStar --input input --main-jar BushLaunch-0.7.0.jar --main-class pl.bushstar.bushlaunch.BushLaunch --runtime-image runtime --icon installer\bushlaunch.ico --dest dist
+iscc /DAppVersion=0.7.0 installer\BushLaunch.iss
 ```
 
 Wynik: `dist/BushLaunch-Setup.exe`. Na GitHubie robi to samo `.github/workflows/build.yml`
@@ -86,7 +93,7 @@ Wynik: `dist/BushLaunch-Setup.exe`. Na GitHubie robi to samo `.github/workflows/
 
 - `BushLaunch.java` - okno launchera
 - `GameInstaller.java` - pobieranie plików gry i budowa komendy uruchomienia
-- `MicrosoftAuth.java` - logowanie kontem Microsoft (kod urządzenia → Xbox → XSTS → Minecraft, odświeżanie sesji)
+- `MicrosoftAuth.java` - logowanie kontem Microsoft (przeglądarka z PKCE lub kod urządzenia → Xbox → XSTS → Minecraft, odświeżanie sesji)
 - `Updater.java` - automatyczne aktualizacje (latest.json, pobieranie, SHA-256, cichy instalator)
 - `JavaFinder.java` - wybór Javy dla danej wersji
 - `Json.java` - mały parser JSON
