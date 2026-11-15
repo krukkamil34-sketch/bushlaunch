@@ -4,6 +4,7 @@ import pl.bushstar.bushlaunch.GameInstaller.VersionEntry;
 
 import javax.imageio.ImageIO;
 import javax.swing.BorderFactory;
+import javax.swing.Box;
 import javax.swing.BoxLayout;
 import javax.swing.DefaultListCellRenderer;
 import javax.swing.DefaultListModel;
