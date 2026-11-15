@@ -2296,8 +2296,8 @@ public class BushLaunch {
     private JPanel buildFriendsPanel(Runnable close, Runnable resize) {
         final int W = 306;
         JPanel root = new JPanel(new BorderLayout());
-        root.setBackground(new Color(0x071006));
-        root.setBorder(BorderFactory.createLineBorder(new Color(0x20321D)));
+        root.setBackground(new Color(0x0D1318));
+        root.setBorder(BorderFactory.createLineBorder(new Color(0x1E2A34)));
 
         // nagłówek: Znajomi · 3/4 online  [x]
         JComponent head = new Clickable(null) {
@@ -2363,8 +2363,8 @@ public class BushLaunch {
         JScrollPane scroll = darkScroll(wrap);
         scroll.setBorder(new EmptyBorder(0, 0, 0, 0));
         scroll.getViewport().setOpaque(false);
-        scroll.getViewport().setBackground(new Color(0x071006));
-        scroll.getVerticalScrollBar().setBackground(new Color(0x071006));
+        scroll.getViewport().setBackground(new Color(0x0D1318));
+        scroll.getVerticalScrollBar().setBackground(new Color(0x0D1318));
 
         // dolny przycisk "Dodaj znajomego" z przerywaną ramką, po kliknięciu pole na nick
         CardLayout bottomCards = new CardLayout();
@@ -2642,12 +2642,12 @@ public class BushLaunch {
             int w = getWidth();
             int cy = getHeight() / 2;
             if (hover || confirming) {
-                g.setColor(new Color(0x14220F));
+                g.setColor(alpha(Color.WHITE, 7));
                 g.fill(new RoundRectangle2D.Double(6, 2, w - 12, getHeight() - 4, 14, 14));
             }
             // głowa + kropka statusu
             BufferedImage sk = friendSkins.get(nick);
-            drawAvatar(g, sk == NO_SKIN ? null : sk, 16, cy - 17, 34, st[0], new Color(0x071006));
+            drawAvatar(g, sk == NO_SKIN ? null : sk, 16, cy - 17, 34, st[0], new Color(0x0D1318));
             // nick i opis
             int tx = 66;
             int right = confirming ? 126 : game ? 84 : 14;
@@ -2663,10 +2663,10 @@ public class BushLaunch {
                 int bw = 62;
                 int bh = 28;
                 joinRect.setBounds(w - 14 - bw, cy - bh / 2, bw, bh);
-                g.setPaint(new GradientPaint(0, joinRect.y, new Color(0xFFAA45), 0, joinRect.y + bh, new Color(0xFF8428)));
+                g.setPaint(new GradientPaint(0, joinRect.y, ACCENT_HI, 0, joinRect.y + bh, ACCENT));
                 g.fill(new RoundRectangle2D.Double(joinRect.x, joinRect.y, bw, bh, 14, 14));
                 g.setFont(body(Font.BOLD, 13));
-                g.setColor(new Color(0x241306));
+                g.setColor(ON_ACCENT);
                 String t = "Dołącz";
                 g.drawString(t, joinRect.x + (bw - g.getFontMetrics().stringWidth(t)) / 2, mid(g, cy));
             }
@@ -2732,7 +2732,7 @@ public class BushLaunch {
             int w = getWidth();
             int cy = getHeight() / 2;
             if (hover) {
-                g.setColor(new Color(0x14220F));
+                g.setColor(alpha(Color.WHITE, 7));
                 g.fill(new RoundRectangle2D.Double(6, 2, w - 12, getHeight() - 4, 14, 14));
             }
             BufferedImage sk = friendSkins.get(nick);
@@ -2794,7 +2794,7 @@ public class BushLaunch {
             int w = getWidth();
             int cy = getHeight() / 2;
             if (hover) {
-                g.setColor(new Color(0x14220F));
+                g.setColor(alpha(Color.WHITE, 7));
                 g.fill(new RoundRectangle2D.Double(6, 2, w - 12, getHeight() - 4, 14, 14));
             }
             BufferedImage sk = friendSkins.get(nick);
@@ -3936,36 +3936,101 @@ public class BushLaunch {
 
         build[0] = () -> {
             account.removeAll();
-            JComponent info = new JComponent() {
-                @Override
-                protected void paintComponent(Graphics g0) {
-                    Graphics2D g = (Graphics2D) g0.create();
-                    aa(g);
-                    card(g, 0, 0, getWidth(), getHeight(), 14, false);
-                    drawAvatar(g, skin, 12, 14, 44, selfState(), new Color(0x10171E));
-                    g.setFont(body(Font.BOLD, 17));
-                    g.setColor(TEXT);
-                    g.drawString(fit(g, nick.isEmpty() ? "Gość" : nick, getWidth() - 90), 68, 34);
-                    g.setFont(body(Font.PLAIN, 13));
-                    g.setColor(MUTED);
-                    g.drawString(isMicrosoft() ? "Konto Microsoft (premium)" : "Nie zalogowano", 68, 54);
+            account.setBorder(javax.swing.BorderFactory.createEmptyBorder(2, 0, 2, 0));
+
+            JLabel heading = new JLabel("Konto");
+            heading.setForeground(TEXT);
+            heading.setFont(head(Font.BOLD, 23));
+            heading.setAlignmentX(Component.LEFT_ALIGNMENT);
+            JLabel subtitle = htmlLabel("Logowanie przez oficjalne konto Microsoft", MUTED, 13, Font.PLAIN);
+            account.add(heading);
+            account.add(javax.swing.Box.createVerticalStrut(3));
+            account.add(subtitle);
+            account.add(javax.swing.Box.createVerticalStrut(18));
+
+            JPanel profile = new JPanel(new BorderLayout(12, 0));
+            profile.setOpaque(true);
+            profile.setBackground(new Color(0x101D1C));
+            profile.setBorder(javax.swing.BorderFactory.createCompoundBorder(
+                    javax.swing.BorderFactory.createLineBorder(ACCENT_DIM, 1),
+                    javax.swing.BorderFactory.createEmptyBorder(13, 13, 12, 13)));
+            JComponent avatar = new JComponent() {
+                @Override protected void paintComponent(Graphics g0) {
+                    Graphics2D g = (Graphics2D) g0.create(); aa(g);
+                    drawAvatar(g, skin, 0, 0, 56, selfState(), new Color(0x10171E));
                     g.dispose();
                 }
             };
-            info.setPreferredSize(new Dimension(10, 72));
-            info.setMaximumSize(new Dimension(Integer.MAX_VALUE, 72));
-            info.setAlignmentX(Component.LEFT_ALIGNMENT);
-            account.add(info);
-            account.add(javax.swing.Box.createVerticalStrut(16));
+            avatar.setPreferredSize(new Dimension(56, 56));
+            profile.add(avatar, BorderLayout.WEST);
+            JPanel identity = new JPanel();
+            identity.setOpaque(false);
+            identity.setLayout(new BoxLayout(identity, BoxLayout.Y_AXIS));
+            JLabel username = new JLabel(nick == null || nick.isBlank() ? "Gość" : nick);
+            username.setForeground(TEXT); username.setFont(body(Font.BOLD, 17));
+            JLabel provider = new JLabel("▦  Konto Microsoft  ·  Minecraft Java");
+            provider.setForeground(MUTED); provider.setFont(body(Font.PLAIN, 12));
+            identity.add(username); identity.add(javax.swing.Box.createVerticalStrut(4)); identity.add(provider);
+            profile.add(identity, BorderLayout.CENTER);
+            JLabel active = new JLabel(isMicrosoft() ? "✓ Aktywne" : "Nie zalogowano");
+            active.setOpaque(true);
+            active.setBackground(isMicrosoft() ? ACCENT : PANEL_HI);
+            active.setForeground(isMicrosoft() ? ON_ACCENT : MUTED);
+            active.setFont(body(Font.BOLD, 11));
+            active.setBorder(javax.swing.BorderFactory.createEmptyBorder(6, 10, 6, 10));
+            profile.add(active, BorderLayout.EAST);
+            profile.setAlignmentX(Component.LEFT_ALIGNMENT);
+            profile.setMaximumSize(new Dimension(Integer.MAX_VALUE, 86));
+            account.add(profile);
+            account.add(javax.swing.Box.createVerticalStrut(10));
+
+            JPanel details = new JPanel(new GridLayout(1, 3, 8, 0));
+            details.setOpaque(false);
+            String[][] values = isMicrosoft()
+                    ? new String[][]{{"Sesja", "zapamiętana"}, {"Licencja", "Java Edition"}, {"Status", "gotowy do gry"}}
+                    : new String[][]{{"Sesja", "brak"}, {"Licencja", "nieznana"}, {"Status", "wymaga logowania"}};
+            for (String[] value : values) {
+                JPanel tile = new JPanel(); tile.setOpaque(true); tile.setBackground(PANEL);
+                tile.setBorder(javax.swing.BorderFactory.createEmptyBorder(8, 9, 8, 7));
+                tile.setLayout(new BoxLayout(tile, BoxLayout.Y_AXIS));
+                JLabel cap = new JLabel(value[0]); cap.setForeground(MUTED); cap.setFont(body(Font.PLAIN, 11));
+                JLabel val = new JLabel(value[1]); val.setForeground(isMicrosoft() ? ACCENT_HI : TEXT); val.setFont(head(Font.BOLD, 12));
+                tile.add(cap); tile.add(javax.swing.Box.createVerticalStrut(4)); tile.add(val); details.add(tile);
+            }
+            details.setAlignmentX(Component.LEFT_ALIGNMENT);
+            details.setMaximumSize(new Dimension(Integer.MAX_VALUE, 58));
+            account.add(details);
+            account.add(javax.swing.Box.createVerticalStrut(10));
 
             if (isMicrosoft()) {
+                JLabel saved = new JLabel("✓  Sesja jest zapisana na tym komputerze");
+                saved.setForeground(TEXT); saved.setFont(body(Font.PLAIN, 13));
+                saved.setBorder(javax.swing.BorderFactory.createCompoundBorder(
+                        javax.swing.BorderFactory.createLineBorder(BORDER),
+                        javax.swing.BorderFactory.createEmptyBorder(10, 12, 10, 12)));
+                saved.setAlignmentX(Component.LEFT_ALIGNMENT);
+                saved.setMaximumSize(new Dimension(Integer.MAX_VALUE, 42));
+                account.add(saved);
+                account.add(javax.swing.Box.createVerticalStrut(9));
                 account.add(wideButton("Zmień konto Microsoft", true, startLogin));
-                account.add(javax.swing.Box.createVerticalStrut(8));
-                account.add(wideButton("Wyloguj", false, () -> {
+                account.add(javax.swing.Box.createVerticalStrut(7));
+                account.add(wideButton("Wyloguj z tego komputera", false, () -> {
                     MicrosoftAuth.deleteAccount(baseDir);
                     msAccount = null;
                     applyAccount();
                     build[0].run();
+                }));
+            } else {
+                account.add(wideButton("Zaloguj przez Microsoft", true, startLogin));
+            }
+            account.add(javax.swing.Box.createVerticalStrut(10));
+            account.add(htmlLabel("Hasło wpisujesz wyłącznie na oficjalnej stronie Microsoft.", MUTED, 12, Font.PLAIN));
+            account.add(javax.swing.Box.createVerticalStrut(5));
+            account.add(err);
+            account.revalidate();
+            account.repaint();
+        };
+        build[0].run();
                 }));
             } else {
                 account.add(htmlLabel("Do gry potrzebne jest konto Microsoft z Minecraftem Java Edition.",
