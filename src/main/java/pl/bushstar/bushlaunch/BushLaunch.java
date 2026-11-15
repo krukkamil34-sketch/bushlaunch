@@ -56,6 +56,8 @@ import java.awt.geom.AffineTransform;
 import java.awt.geom.Arc2D;
 import java.awt.geom.Ellipse2D;
 import java.awt.geom.Path2D;
+import java.awt.font.TextAttribute;
+import java.awt.font.TextLayout;
 import java.awt.geom.RoundRectangle2D;
 import java.awt.image.BufferedImage;
 import java.io.BufferedReader;
@@ -71,6 +73,7 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.HashMap;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -85,32 +88,34 @@ import java.util.stream.Stream;
 /**
  * BushLaunch - launcher Minecraft by BushStar.
  * Pobiera wybraną wersję gry z serwerów Mojang i ją uruchamia (wymaga konta Microsoft z Minecraftem Java).
- * Wygląd: ciemny launcher w stylu Fire Client (pasek boczny, scena ze skinem, duży przycisk GRAJ).
+ * Wygląd: ciemny zielony panel (menu boczne z ostatnio granymi, nocna scena, dolny pasek z wersją, RAM-em i przyciskiem GRAJ).
  */
 public class BushLaunch {
 
-    public static final String LAUNCHER_VERSION = "0.7.0";
+    public static final String LAUNCHER_VERSION = "0.8.0";
 
     /** Link do Discorda BushStar - podmień na swój zaproszeniowy. */
     private static final String DISCORD_URL = "https://discord.gg/";
 
     // ------------------------------------------------------------------ kolory i fonty
 
-    static final Color BG = new Color(0x0C0807);
-    static final Color SIDEBAR = new Color(0x130C0A);
-    static final Color PANEL = new Color(0x1B120E);
-    static final Color PANEL_HI = new Color(0x26180F);
-    static final Color ACCENT = new Color(0xE8590C);
-    static final Color ACCENT_HI = new Color(0xFF7A1F);
-    static final Color ACCENT_DIM = new Color(0x7A330E);
-    static final Color TEXT = new Color(0xF4EEEA);
-    static final Color MUTED = new Color(0x9C8F89);
-    static final Color BORDER = new Color(0x34251D);
-    static final Color GLOW = new Color(0xFF8A3D);
+    static final Color BG = new Color(0x090D11);
+    static final Color SIDEBAR = new Color(0x0B1015);
+    static final Color PANEL = new Color(0x0F151B);
+    static final Color PANEL_HI = new Color(0x17202A);
+    static final Color ACCENT = new Color(0x12D983);
+    static final Color ACCENT_HI = new Color(0x2CF59B);
+    static final Color ACCENT_DIM = new Color(0x0C5C3A);
+    static final Color ON_ACCENT = new Color(0x04180F);
+    static final Color TEXT = new Color(0xF2F6F4);
+    static final Color MUTED = new Color(0x8592A0);
+    static final Color BORDER = new Color(0x1C2630);
+    static final Color GLOW = new Color(0x19E68C);
     static final Color DISCORD = new Color(0x5865F2);
 
     private static final String HEAD_FONT = pickFont("Bahnschrift", "Segoe UI", "Arial");
     private static final String BODY_FONT = pickFont("Segoe UI", "Arial");
+    private static final String MONO_FONT = pickMono();
 
     private static String pickFont(String... want) {
         Set<String> have = new HashSet<>(Arrays.asList(
@@ -123,12 +128,49 @@ public class BushLaunch {
         return Font.SANS_SERIF;
     }
 
+    private static String pickMono() {
+        Set<String> have = new HashSet<>(Arrays.asList(
+                GraphicsEnvironment.getLocalGraphicsEnvironment().getAvailableFontFamilyNames()));
+        for (String w : new String[]{"Cascadia Mono", "Consolas", "JetBrains Mono", "DejaVu Sans Mono"}) {
+            if (have.contains(w)) {
+                return w;
+            }
+        }
+        return Font.MONOSPACED;
+    }
+
     static Font head(int style, float size) {
         return new Font(HEAD_FONT, Font.PLAIN, 12).deriveFont(style, size);
     }
 
     static Font body(int style, float size) {
         return new Font(BODY_FONT, Font.PLAIN, 12).deriveFont(style, size);
+    }
+
+    /** Czcionka techniczna (napisy typu BUSHLAUNCH, JAVA EDITION, etykiety). */
+    static Font mono(int style, float size) {
+        return new Font(MONO_FONT, Font.PLAIN, 12).deriveFont(style, size);
+    }
+
+    /** Ta sama czcionka z rozstrzeleniem liter (tracking, np. 0.14 = 14% rozmiaru). */
+    static Font tracked(Font f, float tracking) {
+        Map<TextAttribute, Object> m = new HashMap<>();
+        m.put(TextAttribute.TRACKING, tracking);
+        return f.deriveFont(m);
+    }
+
+    /** Szerokość tekstu w aktualnej czcionce g (uwzględnia rozstrzelenie liter). */
+    static int tw(Graphics2D g, String s) {
+        if (s == null || s.isEmpty()) {
+            return 0;
+        }
+        return (int) Math.ceil(new TextLayout(s, g.getFont(), g.getFontRenderContext()).getAdvance());
+    }
+
+    /** Linia bazowa tekstu wyśrodkowanego w pionie wokół cy. */
+    static int mid(Graphics2D g, int cy) {
+        FontMetrics fm = g.getFontMetrics();
+        return cy + (fm.getAscent() - fm.getDescent()) / 2;
     }
 
     static void aa(Graphics2D g) {
@@ -144,67 +186,47 @@ public class BushLaunch {
             return text;
         }
         String t = text;
-        while (t.length() > 1 && fm.stringWidth(t + "\u2026") > maxW) {
+        while (t.length() > 1 && fm.stringWidth(t + "…") > maxW) {
             t = t.substring(0, t.length() - 1);
         }
-        return t.trim() + "\u2026";
+        return t.trim() + "…";
     }
 
     static Color alpha(Color c, int a) {
         return new Color(c.getRed(), c.getGreen(), c.getBlue(), a);
     }
 
-    /** Karta w stylu launchera: gradient, jasna krawędź u góry, ścięty róg. */
+    /** Karta: ciemny panel z cienką krawędzią i zaokrąglonymi rogami (hot = zielona krawędź). */
     static void card(Graphics2D g, int x, int y, int w, int h, int c, boolean hot) {
-        Shape sh = cut(x, y, w, h, c);
-        g.setPaint(new GradientPaint(0, y, hot ? new Color(0x2C1A11) : new Color(0x1F1511),
-                0, y + h, hot ? new Color(0x1F120C) : new Color(0x150E0B)));
-        g.fill(sh);
+        double arc = Math.min(c * 1.6, 28);
+        g.setPaint(new GradientPaint(0, y, hot ? new Color(0x13211E) : new Color(0x111820),
+                0, y + h, hot ? new Color(0x0F1A18) : PANEL));
+        g.fill(new RoundRectangle2D.Double(x, y, w, h, arc, arc));
         g.setStroke(new BasicStroke(1f));
-        g.setColor(hot ? alpha(ACCENT, 170) : BORDER);
-        g.draw(cut(x + 0.5, y + 0.5, w - 1, h - 1, c));
-        g.setPaint(new GradientPaint(x, y, alpha(Color.WHITE, 26), x + w, y, alpha(Color.WHITE, 0)));
-        g.fillRect(x + 1, y + 1, Math.max(0, w - c - 2), 1);
+        g.setColor(hot ? alpha(ACCENT, 150) : BORDER);
+        g.draw(new RoundRectangle2D.Double(x + 0.5, y + 0.5, w - 1, h - 1, arc, arc));
     }
 
-    /** Prostokąt z ściętym prawym górnym rogiem (jak w Fire Client). */
+    /** Zaokrąglony prostokąt (c = promień zaokrąglenia w przybliżeniu). */
     static Shape cut(double x, double y, double w, double h, double c) {
-        Path2D p = new Path2D.Double();
-        p.moveTo(x, y);
-        p.lineTo(x + w - c, y);
-        p.lineTo(x + w, y + c);
-        p.lineTo(x + w, y + h);
-        p.lineTo(x, y + h);
-        p.closePath();
-        return p;
+        double arc = Math.min(c * 1.6, 28);
+        return new RoundRectangle2D.Double(x, y, w, h, arc, arc);
     }
 
-    /** Hero: ścięty prawy górny i lewy dolny róg. */
-    static Shape cut2(double x, double y, double w, double h, double c) {
-        Path2D p = new Path2D.Double();
-        p.moveTo(x, y);
-        p.lineTo(x + w - c, y);
-        p.lineTo(x + w, y + c);
-        p.lineTo(x + w, y + h);
-        p.lineTo(x + c, y + h);
-        p.lineTo(x, y + h - c);
-        p.closePath();
-        return p;
-    }
-
-    static Path2D flame(double x, double y, double s) {
-        Path2D p = new Path2D.Double();
-        p.moveTo(0.50, 0.00);
-        p.curveTo(0.58, 0.25, 0.97, 0.38, 0.92, 0.70);
-        p.curveTo(0.88, 0.95, 0.14, 0.97, 0.09, 0.70);
-        p.curveTo(0.06, 0.50, 0.24, 0.40, 0.30, 0.24);
-        p.curveTo(0.40, 0.36, 0.46, 0.18, 0.50, 0.00);
-        p.closePath();
-        AffineTransform at = new AffineTransform();
-        at.translate(x, y);
-        at.scale(s, s);
-        p.transform(at);
-        return p;
+    /** Logo: zielona litera B w ciemnym kwadracie z zieloną ramką. */
+    static void logoMark(Graphics2D g0, int x, int y, int s) {
+        Graphics2D g = (Graphics2D) g0.create();
+        aa(g);
+        g.setColor(new Color(0x0B2A1E));
+        g.fill(new RoundRectangle2D.Double(x, y, s, s, s * 0.32, s * 0.32));
+        g.setColor(ACCENT);
+        g.setStroke(new BasicStroke(Math.max(1.2f, s / 18f)));
+        g.draw(new RoundRectangle2D.Double(x + 0.8, y + 0.8, s - 1.6, s - 1.6, s * 0.32, s * 0.32));
+        g.setFont(mono(Font.BOLD, s * 0.66f));
+        FontMetrics fm = g.getFontMetrics();
+        g.setColor(ACCENT_HI);
+        g.drawString("B", x + (s - fm.stringWidth("B")) / 2, y + s / 2 + (fm.getAscent() - fm.getDescent()) / 2);
+        g.dispose();
     }
 
     // ------------------------------------------------------------------ stan
@@ -224,7 +246,6 @@ public class BushLaunch {
     private String nick = "";
     private int ramMb = 2048;
     private boolean showAll;
-    private JLabel lockerName;
 
     private boolean loadingVersions = true;
     private boolean busy;
@@ -236,12 +257,17 @@ public class BushLaunch {
     private int modsCount;
 
     private BufferedImage skin;
+    private static final BufferedImage NO_SKIN = new BufferedImage(1, 1, BufferedImage.TYPE_INT_ARGB);
+    private final Map<String, BufferedImage> friendSkins = new java.util.concurrent.ConcurrentHashMap<>();
 
     private JTextArea logArea;
     private CardLayout cards;
     private JPanel pages;
     private final Map<String, NavButton> navs = new LinkedHashMap<>();
-    private Hero hero;
+    private JComponent hero;
+    private HeroPanel heroPanel;
+    private BottomBar bottomBar;
+    private boolean online = true;
     private JPanel recentCards;
     private JPanel profilesGrid;
     private JPanel modsList;
@@ -293,8 +319,8 @@ public class BushLaunch {
         frame.setUndecorated(true);
         frame.setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
         frame.setIconImage(makeIcon());
-        frame.setMinimumSize(new Dimension(1180, 700));
-        frame.setSize(1360, 800);
+        frame.setMinimumSize(new Dimension(1040, 660));
+        frame.setSize(1240, 760);
         frame.setLocationRelativeTo(null);
         frame.setMaximizedBounds(GraphicsEnvironment.getLocalGraphicsEnvironment().getMaximumWindowBounds());
 
@@ -323,6 +349,7 @@ public class BushLaunch {
 
         refreshStats();
         loadSkinAsync();
+        loadFriendSkins();
         loadVersions();
         if (Boolean.parseBoolean(config.getProperty("autoUpdate", "true"))) {
             checkForUpdates(false);
@@ -341,9 +368,7 @@ public class BushLaunch {
         pages.add(buildHome(), "home");
         pages.add(buildProfilesPage(), "profiles");
         pages.add(buildModsPage(), "mods");
-        pages.add(buildLockerPage(), "locker");
-        pages.add(buildSoon("Sklep", "Sklep BushStar pojawi się tutaj.", 4), "shop");
-        pages.add(buildSoon("Nagroda", "Codzienne nagrody dla graczy BushStar.", 5), "reward");
+        pages.add(buildNewsPage(), "news");
         pages.add(buildConsolePage(), "console");
 
         JPanel main = new JPanel(new BorderLayout());
@@ -360,11 +385,7 @@ public class BushLaunch {
     private static BufferedImage makeIcon() {
         BufferedImage im = new BufferedImage(64, 64, BufferedImage.TYPE_INT_ARGB);
         Graphics2D g = im.createGraphics();
-        aa(g);
-        g.setColor(ACCENT);
-        g.fill(flame(8, 4, 48));
-        g.setColor(new Color(0xFFB347));
-        g.fill(flame(22, 26, 20));
+        logoMark(g, 2, 2, 60);
         g.dispose();
         return im;
     }
@@ -377,17 +398,27 @@ public class BushLaunch {
             protected void paintComponent(Graphics g0) {
                 Graphics2D g = (Graphics2D) g0.create();
                 aa(g);
-                g.setColor(new Color(0x0B0706));
+                g.setColor(new Color(0x080B0F));
                 g.fillRect(0, 0, getWidth(), getHeight());
-                g.setColor(ACCENT);
-                g.fill(flame(12, 9, 16));
-                g.setFont(body(Font.PLAIN, 13));
+                g.setColor(BORDER);
+                g.fillRect(0, getHeight() - 1, getWidth(), 1);
+                logoMark(g, 22, (getHeight() - 28) / 2, 28);
+                g.setFont(tracked(mono(Font.BOLD, 20), 0.14f));
+                int x = 62;
+                int base = mid(g, getHeight() / 2);
                 g.setColor(TEXT);
-                g.drawString("BushLaunch", 38, 21);
+                g.drawString("BUSH", x, base);
+                x += tw(g, "BUSH");
+                g.setColor(ACCENT_HI);
+                g.drawString("LAUNCH", x, base);
+                x += tw(g, "LAUNCH") + 14;
+                g.setFont(mono(Font.PLAIN, 14));
+                g.setColor(MUTED);
+                g.drawString("v" + LAUNCHER_VERSION, x, mid(g, getHeight() / 2));
                 g.dispose();
             }
         };
-        bar.setPreferredSize(new Dimension(10, 34));
+        bar.setPreferredSize(new Dimension(10, 46));
 
         JPanel buttons = new JPanel(new GridLayout(1, 3));
         buttons.setOpaque(false);
@@ -440,7 +471,7 @@ public class BushLaunch {
             @Override
             protected void paintComponent(Graphics g0) {
                 Graphics2D g = (Graphics2D) g0.create();
-                g.setPaint(new GradientPaint(0, 0, new Color(0x160D0A), 0, getHeight(), new Color(0x0F0907)));
+                g.setColor(SIDEBAR);
                 g.fillRect(0, 0, getWidth(), getHeight());
                 g.setColor(BORDER);
                 g.fillRect(getWidth() - 1, 0, 1, getHeight());
@@ -448,128 +479,132 @@ public class BushLaunch {
             }
         };
         side.setOpaque(false);
-        side.setPreferredSize(new Dimension(236, 10));
+        side.setPreferredSize(new Dimension(272, 10));
 
-        JComponent logo = new JComponent() {
+        JPanel top = new JPanel();
+        top.setOpaque(false);
+        top.setLayout(new BoxLayout(top, BoxLayout.Y_AXIS));
+        top.setBorder(new EmptyBorder(14, 0, 0, 0));
+        addNav(top, "home", "Graj", 12, null);
+        addNav(top, "profiles", "Wersje", 1, null);
+        addNav(top, "mods", "Mody", 13, null);
+        addNav(top, "news", "Aktualności", 10, null);
+        addNav(top, "settings", "Ustawienia", 14, this::openSettings);
+
+        JComponent recentHead = new JComponent() {
             @Override
             protected void paintComponent(Graphics g0) {
                 Graphics2D g = (Graphics2D) g0.create();
                 aa(g);
-                g.setPaint(new RadialGradientPaint(41f, 48f, 34f,
-                        new float[]{0f, 1f}, new Color[]{alpha(GLOW, 90), alpha(GLOW, 0)}));
-                g.fillRect(0, 0, getWidth(), getHeight());
-                g.setPaint(new GradientPaint(0, 24, ACCENT_HI, 0, 58, new Color(0xC2410C)));
-                g.fill(flame(24, 24, 34));
-                g.setColor(new Color(0xFFD08A));
-                g.fill(flame(33, 43, 16));
-                g.setFont(head(Font.BOLD, 23));
-                g.setColor(ACCENT_HI);
-                g.drawString("Bush", 66, 51);
-                int w = g.getFontMetrics().stringWidth("Bush");
-                g.setColor(TEXT);
-                g.setFont(head(Font.PLAIN, 23));
-                g.drawString("Launch", 66 + w + 3, 51);
+                g.setFont(tracked(mono(Font.PLAIN, 12), 0.16f));
+                g.setColor(MUTED);
+                g.drawString("OSTATNIO GRANE", 26, 40);
                 g.dispose();
             }
         };
-        logo.setPreferredSize(new Dimension(10, 92));
+        recentHead.setPreferredSize(new Dimension(270, 60));
+        recentHead.setMaximumSize(new Dimension(Integer.MAX_VALUE, 60));
+        recentHead.setAlignmentX(Component.LEFT_ALIGNMENT);
+        top.add(recentHead);
 
-        JPanel nav = new JPanel();
-        nav.setOpaque(false);
-        nav.setLayout(new BoxLayout(nav, BoxLayout.Y_AXIS));
-        addNav(nav, "home", "Graj", 0);
-        addNav(nav, "profiles", "Moje profile", 1);
-        addNav(nav, "mods", "Mody", 2);
-        addNav(nav, "locker", "Szafka", 3);
-        addNav(nav, "shop", "Sklep", 4);
-        addNav(nav, "reward", "Nagroda", 5);
-        addNav(nav, "console", "Konsola", 6);
+        recentCards = new JPanel();
+        recentCards.setOpaque(false);
+        recentCards.setLayout(new BoxLayout(recentCards, BoxLayout.Y_AXIS));
+        recentCards.setAlignmentX(Component.LEFT_ALIGNMENT);
+        top.add(recentCards);
 
         JPanel bottom = new JPanel();
         bottom.setOpaque(false);
         bottom.setLayout(new BoxLayout(bottom, BoxLayout.Y_AXIS));
-        bottom.setBorder(new EmptyBorder(0, 0, 6, 0));
-
-        Clickable user = new Clickable(this::openAccountDialog) {
-            @Override
-            protected void paintComponent(Graphics g0) {
-                Graphics2D g = (Graphics2D) g0.create();
-                aa(g);
-                int w = getWidth() - 28;
-                g.translate(14, 4);
-                card(g, 0, 0, w, getHeight() - 8, 14, hover);
-                drawHead(g, skin, 12, 11, 42);
-                g.setFont(body(Font.BOLD, 15));
-                g.setColor(TEXT);
-                g.drawString(nick.isEmpty() ? "Zaloguj się" : nick, 64, 29);
-                g.setFont(body(Font.PLAIN, 12));
-                g.setColor(busy ? ACCENT_HI : MUTED);
-                g.drawString(busy ? "Przygotowanie..." : (isMicrosoft() ? "Konto Microsoft" : "Nie zalogowano"), 64, 47);
-                g.setColor(MUTED);
-                g.setStroke(new BasicStroke(1.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-                int cx = w - 18;
-                g.drawLine(cx - 3, 26, cx + 2, 31);
-                g.drawLine(cx + 2, 31, cx - 3, 36);
-                g.dispose();
-            }
-        };
-        user.setPreferredSize(new Dimension(220, 72));
-        user.setMaximumSize(new Dimension(Integer.MAX_VALUE, 72));
-        user.setAlignmentX(Component.LEFT_ALIGNMENT);
-        sidebarUser = user;
+        bottom.setBorder(new EmptyBorder(0, 0, 8, 0));
 
         Clickable discord = new Clickable(() -> openUrl(DISCORD_URL)) {
             @Override
             protected void paintComponent(Graphics g0) {
                 Graphics2D g = (Graphics2D) g0.create();
                 aa(g);
-                int w = getWidth() - 28;
-                g.translate(14, 2);
-                g.setPaint(new GradientPaint(0, 0, hover ? new Color(0x7480FF) : new Color(0x5865F2),
-                        0, 44, hover ? new Color(0x5865F2) : new Color(0x4752C4)));
-                g.fill(new RoundRectangle2D.Double(0, 0, w, 44, 14, 14));
+                int cy = getHeight() / 2;
+                g.setColor(hover ? DISCORD : alpha(DISCORD, 190));
+                g.fill(new RoundRectangle2D.Double(30, cy - 9, 24, 18, 9, 9));
                 g.setColor(Color.WHITE);
-                g.fill(new RoundRectangle2D.Double(16, 13, 22, 17, 8, 8));
-                g.setColor(new Color(0x5865F2));
-                g.fillOval(21, 18, 4, 5);
-                g.fillOval(29, 18, 4, 5);
-                g.setColor(Color.WHITE);
-                g.setFont(body(Font.BOLD, 15));
-                g.drawString("Discord", 50, 28);
+                g.fillOval(37, cy - 3, 4, 5);
+                g.fillOval(45, cy - 3, 4, 5);
+                g.setFont(body(Font.PLAIN, 14));
+                g.setColor(hover ? TEXT : MUTED);
+                g.drawString("Discord BushStar", 66, mid(g, cy));
                 g.dispose();
             }
         };
-        discord.setPreferredSize(new Dimension(220, 50));
-        discord.setMaximumSize(new Dimension(Integer.MAX_VALUE, 50));
+        discord.setPreferredSize(new Dimension(270, 38));
+        discord.setMaximumSize(new Dimension(Integer.MAX_VALUE, 38));
         discord.setAlignmentX(Component.LEFT_ALIGNMENT);
 
-        JComponent version = new JComponent() {
+        Clickable user = new Clickable(this::openAccountDialog) {
             @Override
             protected void paintComponent(Graphics g0) {
                 Graphics2D g = (Graphics2D) g0.create();
                 aa(g);
-                g.setFont(body(Font.PLAIN, 11));
-                g.setColor(alpha(MUTED, 170));
-                g.drawString("BushLaunch v" + LAUNCHER_VERSION + "  ·  by BushStar", 18, 16);
+                int w = getWidth() - 32;
+                int h = getHeight() - 10;
+                g.translate(16, 5);
+                card(g, 0, 0, w, h, 14, hover);
+                Graphics2D gh = (Graphics2D) g.create();
+                gh.clip(new RoundRectangle2D.Double(14, (h - 40) / 2.0, 40, 40, 8, 8));
+                drawHead(gh, skin, 14, (h - 40) / 2, 40);
+                gh.dispose();
+                int tx = 66;
+                g.setFont(head(Font.BOLD, 17));
+                g.setColor(TEXT);
+                g.drawString(fit(g, nick.isEmpty() ? "Zaloguj się" : nick, w - tx - 34), tx, h / 2 - 3);
+                int sy = h / 2 + 17;
+                if (busy) {
+                    g.setFont(body(Font.PLAIN, 13));
+                    g.setColor(ACCENT_HI);
+                    g.drawString("Przygotowanie...", tx, sy);
+                } else if (isMicrosoft()) {
+                    // znaczek Microsoft: cztery kolorowe kwadraty
+                    int q = 6;
+                    int qx = tx;
+                    int qy = sy - 10;
+                    g.setColor(new Color(0xF25022));
+                    g.fillRect(qx, qy, q, q);
+                    g.setColor(new Color(0x7FBA00));
+                    g.fillRect(qx + q + 1, qy, q, q);
+                    g.setColor(new Color(0x00A4EF));
+                    g.fillRect(qx, qy + q + 1, q, q);
+                    g.setColor(new Color(0xFFB900));
+                    g.fillRect(qx + q + 1, qy + q + 1, q, q);
+                    g.setFont(body(Font.PLAIN, 14));
+                    g.setColor(MUTED);
+                    g.drawString("Microsoft", tx + 2 * q + 8, sy);
+                } else {
+                    g.setFont(body(Font.PLAIN, 13));
+                    g.setColor(MUTED);
+                    g.drawString("Nie zalogowano", tx, sy);
+                }
+                g.setColor(hover ? TEXT : MUTED);
+                g.setStroke(new BasicStroke(1.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                int cx = w - 20;
+                g.drawLine(cx - 3, h / 2 - 5, cx + 2, h / 2);
+                g.drawLine(cx + 2, h / 2, cx - 3, h / 2 + 5);
                 g.dispose();
             }
         };
-        version.setPreferredSize(new Dimension(220, 24));
-        version.setMaximumSize(new Dimension(Integer.MAX_VALUE, 24));
-        version.setAlignmentX(Component.LEFT_ALIGNMENT);
+        user.setPreferredSize(new Dimension(270, 84));
+        user.setMaximumSize(new Dimension(Integer.MAX_VALUE, 84));
+        user.setAlignmentX(Component.LEFT_ALIGNMENT);
+        sidebarUser = user;
 
-        bottom.add(user);
         bottom.add(discord);
-        bottom.add(version);
+        bottom.add(user);
 
-        side.add(logo, BorderLayout.NORTH);
-        side.add(nav, BorderLayout.CENTER);
+        side.add(top, BorderLayout.CENTER);
         side.add(bottom, BorderLayout.SOUTH);
         return side;
     }
 
-    private void addNav(JPanel nav, String key, String label, int icon) {
-        NavButton b = new NavButton(key, label, icon);
+    private void addNav(JPanel nav, String key, String label, int icon, Runnable action) {
+        NavButton b = new NavButton(key, label, icon, action);
         b.setAlignmentX(Component.LEFT_ALIGNMENT);
         navs.put(key, b);
         nav.add(b);
@@ -594,115 +629,160 @@ public class BushLaunch {
         private final int icon;
         boolean active;
 
-        NavButton(String key, String label, int icon) {
+        NavButton(String key, String label, int icon, Runnable action) {
             super(null);
             this.label = label;
             this.icon = icon;
-            this.onClick = () -> showPage(key);
-            setPreferredSize(new Dimension(220, 54));
-            setMaximumSize(new Dimension(Integer.MAX_VALUE, 54));
+            this.onClick = action != null ? action : () -> showPage(key);
+            setPreferredSize(new Dimension(270, 56));
+            setMaximumSize(new Dimension(Integer.MAX_VALUE, 56));
         }
 
         @Override
         protected void paintComponent(Graphics g0) {
             Graphics2D g = (Graphics2D) g0.create();
             aa(g);
-            int hh = getHeight() - 8;
+            int x = 16;
+            int y = 3;
+            int w = getWidth() - 32;
+            int h = getHeight() - 6;
             if (active) {
-                g.setPaint(new GradientPaint(10, 0, alpha(ACCENT, 70), getWidth() - 10, 0, alpha(ACCENT, 8)));
-                g.fill(new RoundRectangle2D.Double(10, 4, getWidth() - 20, hh, 14, 14));
-                g.setColor(ACCENT_HI);
-                g.fill(new RoundRectangle2D.Double(10, 12, 4, hh - 16, 4, 4));
+                g.setColor(alpha(ACCENT, 26));
+                g.fill(new RoundRectangle2D.Double(x, y, w, h, 24, 24));
+                g.setColor(alpha(ACCENT, 170));
+                g.setStroke(new BasicStroke(1.2f));
+                g.draw(new RoundRectangle2D.Double(x + 0.5, y + 0.5, w - 1, h - 1, 24, 24));
             } else if (hover) {
-                g.setColor(alpha(Color.WHITE, 12));
-                g.fill(new RoundRectangle2D.Double(10, 4, getWidth() - 20, hh, 14, 14));
+                g.setColor(alpha(Color.WHITE, 10));
+                g.fill(new RoundRectangle2D.Double(x, y, w, h, 24, 24));
             }
-            Color c = active ? ACCENT_HI : hover ? TEXT : MUTED;
-            icon(g, icon, 30, 17, 22, c);
-            g.setColor(active || hover ? TEXT : MUTED);
-            g.setFont(body(active ? Font.BOLD : Font.PLAIN, 16));
-            g.drawString(label, 66, 34);
+            Color c = active ? ACCENT_HI : hover ? TEXT : new Color(0xA3B0BA);
+            icon(g, icon, x + 20, y + (h - 24) / 2, 24, c);
+            g.setColor(active || hover ? TEXT : new Color(0xC9D3D8));
+            g.setFont(head(Font.PLAIN, 18));
+            g.drawString(label, x + 58, mid(g, y + h / 2));
             g.dispose();
         }
+    }
+
+    /** Wiersz listy "Ostatnio grane" w pasku bocznym. */
+    private final class RecentRow extends Clickable {
+        private final Profile p;
+
+        RecentRow(Profile p) {
+            super(null);
+            this.p = p;
+            this.onClick = () -> {
+                selectProfile(this.p);
+                showPage("home");
+            };
+            setToolTipText(p.name);
+            setPreferredSize(new Dimension(270, 44));
+            setMaximumSize(new Dimension(Integer.MAX_VALUE, 44));
+            setAlignmentX(Component.LEFT_ALIGNMENT);
+        }
+
+        @Override
+        protected void paintComponent(Graphics g0) {
+            Graphics2D g = (Graphics2D) g0.create();
+            aa(g);
+            boolean sel = p.id.equals(activeProfileId);
+            int cy = getHeight() / 2;
+            if (hover) {
+                g.setColor(alpha(Color.WHITE, 8));
+                g.fill(new RoundRectangle2D.Double(12, 2, getWidth() - 24, getHeight() - 4, 20, 20));
+            }
+            if (sel) {
+                g.setPaint(new RadialGradientPaint(34f, cy, 12f,
+                        new float[]{0f, 1f}, new Color[]{alpha(GLOW, 90), alpha(GLOW, 0)}));
+                g.fillRect(20, cy - 14, 28, 28);
+            }
+            g.setColor(sel ? ACCENT_HI : new Color(0x3A4654));
+            g.fill(new RoundRectangle2D.Double(28, cy - 6, 12, 12, 3, 3));
+
+            String ver = p.version == null || p.version.isBlank() ? p.name : p.version;
+            VersionEntry v = p.version == null || p.version.isBlank() ? null : resolveVersion(p.version);
+            String type = v == null ? "" : typeShort(v.type());
+
+            g.setFont(mono(Font.PLAIN, 12));
+            int typeW = g.getFontMetrics().stringWidth(type);
+            g.setFont(body(Font.PLAIN, 16));
+            g.setColor(sel ? TEXT : new Color(0xB4BFC8));
+            g.drawString(fit(g, ver, getWidth() - 56 - 28 - typeW - 8), 54, mid(g, cy));
+            g.setFont(mono(Font.PLAIN, 12));
+            g.setColor(MUTED);
+            g.drawString(type, getWidth() - 26 - typeW, mid(g, cy));
+            g.dispose();
+        }
+    }
+
+    private static String typeShort(String type) {
+        if ("release".equals(type)) {
+            return "Release";
+        }
+        if ("snapshot".equals(type)) {
+            return "Snapshot";
+        }
+        if ("old_beta".equals(type)) {
+            return "Beta";
+        }
+        if ("old_alpha".equals(type)) {
+            return "Alpha";
+        }
+        return "";
     }
 
     // ------------------------------------------------------------------ strona główna
 
     private JComponent buildHome() {
-        JPanel home = new JPanel(new BorderLayout(18, 0));
+        JPanel home = new JPanel(new BorderLayout(0, 12));
         home.setBackground(BG);
-        home.setBorder(new EmptyBorder(20, 22, 20, 22));
+        home.setBorder(new EmptyBorder(22, 20, 20, 20));
 
-        hero = new Hero();
+        heroPanel = new HeroPanel();
 
-        JPanel recent = new JPanel(new BorderLayout(0, 10));
-        recent.setOpaque(false);
-        recent.setPreferredSize(new Dimension(10, 132));
-        recent.setBorder(new EmptyBorder(14, 0, 0, 0));
+        JPanel news = new JPanel(new GridLayout(1, 2, 16, 0));
+        news.setOpaque(false);
+        news.setPreferredSize(new Dimension(10, 86));
+        news.add(new NewsCard("AKTUALIZACJA", "Nowy wygląd launchera", 0));
+        news.add(new NewsCard("NOWOŚĆ", "Zapamiętywanie sesji", 1));
 
-        JPanel recentHead = new JPanel(new BorderLayout());
-        recentHead.setOpaque(false);
-        JLabel t = new JLabel("Ostatnie profile");
-        t.setForeground(TEXT);
-        t.setFont(head(Font.BOLD, 22));
-        Clickable all = new Clickable(() -> showPage("profiles")) {
-            @Override
-            protected void paintComponent(Graphics g0) {
-                Graphics2D g = (Graphics2D) g0.create();
-                aa(g);
-                g.setColor(hover ? ACCENT_HI : TEXT);
-                g.setFont(body(Font.PLAIN, 14));
-                String s = "Wszystkie profile";
-                g.drawString(s, 0, 18);
-                int x = g.getFontMetrics().stringWidth(s) + 10;
-                g.setStroke(new BasicStroke(1.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-                g.drawLine(x, 13, x + 10, 13);
-                g.drawLine(x + 6, 9, x + 10, 13);
-                g.drawLine(x + 6, 17, x + 10, 13);
-                g.dispose();
+        bottomBar = new BottomBar();
+
+        JPanel south = new JPanel(new BorderLayout(0, 12));
+        south.setOpaque(false);
+        south.add(news, BorderLayout.NORTH);
+        south.add(bottomBar, BorderLayout.SOUTH);
+
+        home.add(heroPanel, BorderLayout.CENTER);
+        home.add(south, BorderLayout.SOUTH);
+        hero = home;
+
+        Timer anim = new Timer(40, e -> {
+            if (home.isShowing()) {
+                heroPanel.repaint();
+                if (busy || loadingVersions) {
+                    bottomBar.repaint();
+                }
             }
-        };
-        all.setPreferredSize(new Dimension(170, 26));
-        recentHead.add(t, BorderLayout.WEST);
-        recentHead.add(all, BorderLayout.EAST);
+        });
+        anim.start();
+        return home;
+    }
 
-        recentCards = new JPanel(new GridLayout(1, 3, 14, 0));
-        recentCards.setOpaque(false);
-
-        recent.add(recentHead, BorderLayout.NORTH);
-        recent.add(recentCards, BorderLayout.CENTER);
-
-        JPanel left = new JPanel(new BorderLayout());
-        left.setOpaque(false);
-        left.add(hero, BorderLayout.CENTER);
-        left.add(recent, BorderLayout.SOUTH);
-
-        JPanel col = new JPanel(new BorderLayout(0, 16));
-        col.setOpaque(false);
-        col.setPreferredSize(new Dimension(300, 10));
-
-        InfoCard news = new InfoCard("Nowości", 10, new String[][]{
-                {"v" + LAUNCHER_VERSION, "Logowanie kontem Microsoft"},
+    /** Strona "Aktualności": dziennik zmian launchera. */
+    private JComponent buildNewsPage() {
+        JPanel p = new JPanel(new BorderLayout(0, 18));
+        p.setBackground(BG);
+        p.setBorder(new EmptyBorder(26, 30, 26, 30));
+        p.add(pageTitle("Aktualności", "Co nowego w BushLaunch."), BorderLayout.NORTH);
+        p.add(new InfoCard("Dziennik zmian", 10, new String[][]{
+                {"v" + LAUNCHER_VERSION, "Nowy wygląd: zielony motyw, menu boczne i dolny pasek startowy"},
+                {"Sesja", "Launcher zapamiętuje logowanie kontem Microsoft"},
                 {"Profile", "Własne profile i zmiana ich wersji gry"},
                 {"Wersje", "Wszystkie wydania i snapshoty Mojang"},
-                {"Premium", "Wymagane konto Microsoft"},
-                {"Wkrótce", "Fabric, Forge i skiny"}});
-
-        JPanel actions = new JPanel(new GridLayout(3, 1, 0, 10));
-        actions.setOpaque(false);
-        actions.setPreferredSize(new Dimension(10, 214));
-        actions.setBorder(new EmptyBorder(0, 0, 0, 0));
-        actions.add(new ActionRow("Folder gry", "Otwórz katalog z grą", 9,
-                () -> openFolder(installer.gameDir())));
-        actions.add(new ActionRow("Ustawienia", "RAM i foldery launchera", 7, this::openSettings));
-        actions.add(new ActionRow("Konsola", "Log launchera i gry", 6, () -> showPage("console")));
-
-        col.add(news, BorderLayout.CENTER);
-        col.add(actions, BorderLayout.SOUTH);
-
-        home.add(left, BorderLayout.CENTER);
-        home.add(col, BorderLayout.EAST);
-        return home;
+                {"Wkrótce", "Fabric, Forge i skiny"}}), BorderLayout.CENTER);
+        return p;
     }
 
     /** Karta z tytułem i listą wpisów (nagłówek + opis). */
@@ -729,7 +809,7 @@ public class BushLaunch {
             g.setColor(BORDER);
             g.fillRect(22, 58, getWidth() - 44, 1);
             int y = 82;
-            int step = Math.max(70, Math.min(96, (getHeight() - 90) / Math.max(1, rows.length)));
+            int step = Math.max(58, Math.min(96, (getHeight() - 90) / Math.max(1, rows.length)));
             for (String[] r : rows) {
                 if (y + 40 > getHeight()) {
                     break;
@@ -741,119 +821,120 @@ public class BushLaunch {
                 g.drawString(r[0], 38, y + 3);
                 g.setColor(MUTED);
                 g.setFont(body(Font.PLAIN, 13));
-                g.drawString(r[1], 38, y + 24);
+                g.drawString(fit(g, r[1], getWidth() - 70), 38, y + 24);
                 y += step;
             }
             g.dispose();
         }
     }
 
-    /** Wiersz szybkiej akcji w prawej kolumnie. */
-    private static final class ActionRow extends Clickable {
+    /** Karta wiadomości pod sceną: miniatura, etykieta i tytuł. */
+    private final class NewsCard extends Clickable {
+        private final String label;
         private final String title;
-        private final String sub;
-        private final int icon;
+        private final BufferedImage thumb;
 
-        ActionRow(String title, String sub, int icon, Runnable onClick) {
-            super(onClick);
+        NewsCard(String label, String title, int kind) {
+            super(() -> { });
+            this.label = label;
             this.title = title;
-            this.sub = sub;
-            this.icon = icon;
+            this.thumb = thumb(kind, 40, 32);
+            this.onClick = () -> showPage("news");
         }
 
         @Override
         protected void paintComponent(Graphics g0) {
             Graphics2D g = (Graphics2D) g0.create();
             aa(g);
-            card(g, 0, 0, getWidth(), getHeight(), 16, hover);
-            g.setColor(alpha(ACCENT, hover ? 70 : 38));
-            g.fill(new RoundRectangle2D.Double(14, (getHeight() - 38) / 2.0, 38, 38, 12, 12));
-            icon(g, icon, 22, (getHeight() - 22) / 2, 22, hover ? Color.WHITE : ACCENT_HI);
+            card(g, 0, 0, getWidth(), getHeight(), 12, hover);
+            int th = getHeight() - 24;
+            int twd = (int) Math.round(th * 1.22);
+            Graphics2D gi = (Graphics2D) g.create();
+            gi.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            gi.clip(new RoundRectangle2D.Double(12, 12, twd, th, 14, 14));
+            gi.drawImage(thumb, 12, 12, twd, th, null);
+            gi.dispose();
+            g.setColor(alpha(Color.WHITE, 22));
+            g.draw(new RoundRectangle2D.Double(12.5, 12.5, twd - 1, th - 1, 14, 14));
+            int tx = 12 + twd + 16;
+            g.setFont(tracked(mono(Font.PLAIN, 12), 0.14f));
+            g.setColor(ACCENT_HI);
+            g.drawString(label, tx, getHeight() / 2 - 5);
+            g.setFont(body(Font.BOLD, 17));
             g.setColor(TEXT);
-            g.setFont(body(Font.BOLD, 15));
-            g.drawString(title, 66, getHeight() / 2 - 2);
-            g.setColor(MUTED);
-            g.setFont(body(Font.PLAIN, 12));
-            g.drawString(sub, 66, getHeight() / 2 + 16);
-            g.setColor(hover ? ACCENT_HI : MUTED);
-            g.setStroke(new BasicStroke(1.7f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-            int cx = getWidth() - 24;
-            int cy = getHeight() / 2;
-            g.drawLine(cx - 3, cy - 5, cx + 2, cy);
-            g.drawLine(cx + 2, cy, cx - 3, cy + 5);
+            g.drawString(fit(g, title, getWidth() - tx - 16), tx, getHeight() / 2 + 20);
             g.dispose();
         }
     }
 
-    // ------------------------------------------------------------------ hero (scena + przycisk GRAJ)
+    private static String ago(long ms) {
+        long sec = Math.max(0, (System.currentTimeMillis() - ms) / 1000);
+        if (sec < 60) {
+            return "przed chwilą";
+        }
+        if (sec < 3600) {
+            return (sec / 60) + " min temu";
+        }
+        if (sec < 86400) {
+            return (sec / 3600) + " godz. temu";
+        }
+        return (sec / 86400) + " dn. temu";
+    }
 
-    private final class Hero extends JComponent {
-        private BufferedImage bg;
-        private int bgW;
-        private int bgH;
-        private final Rectangle gearRect = new Rectangle();
-        private final Rectangle verRect = new Rectangle();
-        private Polygon playPoly = new Polygon();
-        private boolean hoverPlay;
-        private boolean hoverGear;
-        private boolean hoverVer;
+    // ------------------------------------------------------------------ scena (nocny krajobraz, plakietka, tytuł)
+
+    private final class HeroPanel extends JComponent {
+        private BufferedImage scene;
+        private int sceneW;
+        private int sceneH;
         private final long t0 = System.nanoTime();
-        /** Iskry: x (0-1), prędkość, rozmiar, faza, kołysanie. */
-        private final double[][] embers = new double[46][5];
+        /** Świetliki: x (0-1), y (0-1), faza, prędkość. */
+        private final double[][] flies = new double[16][4];
+        /** Gwiazdy: x (0-1), y (0-0.46), rozmiar, faza migotania. */
+        private final double[][] stars = new double[110][4];
+        private final Rectangle friendsRect = new Rectangle();
+        private boolean hoverFriends;
 
-        Hero() {
-            Random er = new Random(7);
-            for (double[] e : embers) {
-                e[0] = er.nextDouble();
-                e[1] = 0.025 + er.nextDouble() * 0.05;
-                e[2] = 1.4 + er.nextDouble() * 2.6;
-                e[3] = er.nextDouble();
-                e[4] = er.nextDouble() * Math.PI * 2;
-            }
-            Timer anim = new Timer(40, e -> {
-                if (isShowing()) {
-                    repaint();
-                }
-            });
-            anim.start();
-
-            MouseAdapter m = new MouseAdapter() {
+        HeroPanel() {
+            MouseAdapter fm = new MouseAdapter() {
                 @Override
                 public void mouseMoved(MouseEvent e) {
-                    boolean p = playPoly.contains(e.getPoint());
-                    boolean gr = gearRect.contains(e.getPoint());
-                    boolean v = verRect.contains(e.getPoint());
-                    if (p != hoverPlay || gr != hoverGear || v != hoverVer) {
-                        hoverPlay = p;
-                        hoverGear = gr;
-                        hoverVer = v;
-                        setCursor(Cursor.getPredefinedCursor(p || gr || v ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
+                    boolean h = friendsRect.contains(e.getPoint());
+                    if (h != hoverFriends) {
+                        hoverFriends = h;
+                        setCursor(Cursor.getPredefinedCursor(h ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
                         repaint();
                     }
                 }
 
                 @Override
                 public void mouseExited(MouseEvent e) {
-                    hoverPlay = false;
-                    hoverGear = false;
-                    hoverVer = false;
+                    hoverFriends = false;
                     setCursor(Cursor.getDefaultCursor());
-                    repaint();
                 }
 
                 @Override
                 public void mouseReleased(MouseEvent e) {
-                    if (playPoly.contains(e.getPoint())) {
-                        onPlay();
-                    } else if (gearRect.contains(e.getPoint())) {
-                        openSettings();
-                    } else if (verRect.contains(e.getPoint())) {
-                        openVersionPicker();
+                    if (friendsRect.contains(e.getPoint())) {
+                        openFriendsDialog();
                     }
                 }
             };
-            addMouseListener(m);
-            addMouseMotionListener(m);
+            addMouseListener(fm);
+            addMouseMotionListener(fm);
+            Random r = new Random(11);
+            for (double[] st : stars) {
+                st[0] = r.nextDouble();
+                st[1] = Math.pow(r.nextDouble(), 1.3) * 0.46;
+                st[2] = 0.8 + r.nextDouble() * 1.2;
+                st[3] = r.nextDouble() * Math.PI * 2;
+            }
+            for (double[] f : flies) {
+                f[0] = r.nextDouble();
+                f[1] = 0.42 + r.nextDouble() * 0.35;
+                f[2] = r.nextDouble() * Math.PI * 2;
+                f[3] = 0.3 + r.nextDouble() * 0.7;
+            }
         }
 
         @Override
@@ -862,221 +943,355 @@ public class BushLaunch {
             aa(g);
             int w = getWidth();
             int h = getHeight();
-            int barH = 110;
-            int barY = h - barH;
-
-            g.setClip(cut2(0, 0, w, h, 26));
-
-            if (bg == null || bgW != w || bgH != h) {
-                bg = landscape(w, h);
-                bgW = w;
-                bgH = h;
-            }
-            g.drawImage(bg, 0, 0, w, h, null);
-
-            // przyciemnienie u góry i płynne przejście do dolnego paska
-            g.setPaint(new GradientPaint(0, 0, new Color(0, 0, 0, 60), 0, 90, new Color(0, 0, 0, 0)));
-            g.fillRect(0, 0, w, 90);
-            g.setPaint(new GradientPaint(0, barY - 130, alpha(PANEL, 0), 0, barY, PANEL));
-            g.fillRect(0, barY - 130, w, 130);
-            g.setColor(PANEL);
-            g.fillRect(0, barY, w, barH);
-            g.setPaint(new GradientPaint(0, 0, alpha(ACCENT, 0), w / 2f, 0, alpha(ACCENT, 200)));
-            g.fillRect(0, barY, w / 2, 2);
-            g.setPaint(new GradientPaint(w / 2f, 0, alpha(ACCENT, 200), w, 0, alpha(ACCENT, 0)));
-            g.fillRect(w / 2, barY, w - w / 2, 2);
-
             double time = (System.nanoTime() - t0) / 1e9;
 
-            // postać
-            double availH = barY;
-            double unit = Math.max(4, availH * 0.66 / 32.0);
-            double top = (availH - 32 * unit) / 2 + 30;
+            g.setClip(new RoundRectangle2D.Double(0, 0, w, h, 28, 28));
+            if (scene == null || sceneW != w || sceneH != h) {
+                scene = nightScene(w, h);
+                sceneW = w;
+                sceneH = h;
+            }
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            g.drawImage(scene, 0, 0, w, h, null);
 
-            // ciepła poświata za postacią
-            float gr = (float) (availH * 0.62);
-            float breathe = (float) (1 + 0.04 * Math.sin(time * 1.6));
-            g.setPaint(new RadialGradientPaint(w / 2f, (float) (top + 16 * unit), gr * breathe,
-                    new float[]{0f, 1f}, new Color[]{alpha(GLOW, 80), alpha(GLOW, 0)}));
-            g.fillRect(0, 0, w, barY);
-
-            // delikatny cień pod postacią
-            g.setColor(alpha(Color.BLACK, 70));
-            g.fill(new Ellipse2D.Double(w / 2.0 - unit * 7, top + 32 * unit - unit * 0.6, unit * 14, unit * 1.6));
-
-            drawFigure(g, skin, w / 2.0, top, unit);
-
-            // unoszące się iskry
-            for (double[] e : embers) {
-                double ph = (time * e[1] + e[3]) % 1.0;
-                double ex = e[0] * w + Math.sin(time * 0.9 + e[4]) * 14;
-                double ey = barY - ph * (barY + 20);
-                int a = (int) (170 * Math.sin(Math.PI * ph));
-                double sz = e[2];
-                g.setColor(alpha(GLOW, Math.max(0, a / 4)));
-                g.fill(new Ellipse2D.Double(ex - sz * 2, ey - sz * 2, sz * 4, sz * 4));
-                g.setColor(alpha(new Color(0xFFD9A0), Math.max(0, a)));
-                g.fill(new Ellipse2D.Double(ex - sz / 2, ey - sz / 2, sz, sz));
+            // gwiazdy (lekko migoczą)
+            for (double[] st : stars) {
+                double tw = 0.5 + 0.5 * Math.sin(time * (0.6 + st[2] * 0.4) + st[3]);
+                int a = (int) (70 + 150 * tw * (1 - st[1] / 0.6));
+                g.setColor(alpha(new Color(0xE6F4EE), Math.max(20, Math.min(255, a))));
+                g.fill(new Ellipse2D.Double(st[0] * w, st[1] * h, st[2], st[2]));
             }
 
-            // winieta
-            g.setPaint(new RadialGradientPaint(w / 2f, barY * 0.5f, Math.max(w, barY) * 0.75f,
-                    new float[]{0.55f, 1f}, new Color[]{alpha(Color.BLACK, 0), alpha(Color.BLACK, 120)}));
-            g.fillRect(0, 0, w, barY);
+            // zielona latarnia przy domu
+            float lx = (float) (w * LANTERN_X);
+            float ly = (float) (h * LANTERN_Y);
+            float flick = (float) (0.88 + 0.12 * Math.sin(time * 4.7) * Math.sin(time * 1.9 + 1));
+            float lr = h * 0.30f * flick;
+            g.setPaint(new RadialGradientPaint(lx, ly, lr, new float[]{0f, 0.35f, 1f},
+                    new Color[]{alpha(GLOW, 120), alpha(GLOW, 42), alpha(GLOW, 0)}));
+            g.fillRect(0, 0, w, h);
+            g.setPaint(new RadialGradientPaint(lx, ly, 9f, new float[]{0f, 1f},
+                    new Color[]{alpha(new Color(0xD8FFEA), 230), alpha(GLOW, 0)}));
+            g.fillRect((int) lx - 10, (int) ly - 10, 20, 20);
 
-            // tabliczka z nickiem
-            String tag = nick.isEmpty() ? "Zaloguj się" : nick;
-            g.setFont(head(Font.BOLD, 26));
-            FontMetrics fm = g.getFontMetrics();
-            int tw = fm.stringWidth(tag) + 44;
-            int tx = (int) (w / 2.0 - tw / 2.0);
-            int ty = (int) (top - 58);
-            g.setColor(new Color(0x0C, 0x08, 0x07, 200));
-            g.fill(cut(tx, ty, tw, 44, 12));
-            g.setColor(ACCENT);
-            g.fillRect(tx, ty + 40, tw, 3);
-            g.setColor(TEXT);
-            g.drawString(tag, tx + 22, ty + 31);
+            // świetliki
+            for (double[] f : flies) {
+                double fx = ((f[0] * w + Math.sin(time * f[3] + f[2]) * 34) % w + w) % w;
+                double fy = h * f[1] + Math.cos(time * f[3] * 1.3 + f[2]) * 16;
+                int a = (int) (60 + 150 * (0.5 + 0.5 * Math.sin(time * 1.7 * f[3] + f[2] * 3)));
+                g.setColor(alpha(GLOW, a / 4));
+                g.fill(new Ellipse2D.Double(fx - 5, fy - 5, 10, 10));
+                g.setColor(alpha(ACCENT_HI, a));
+                g.fill(new Ellipse2D.Double(fx - 1.2, fy - 1.2, 2.4, 2.4));
+            }
 
-            // dolny pasek: ustawienia, wersja
-            int by = barY + (barH - 64) / 2;
-            gearRect.setBounds(28, by, 50, 64);
-            g.setPaint(new GradientPaint(0, gearRect.y, hoverGear ? new Color(0x3A2518) : new Color(0x2C1B12),
-                    0, gearRect.y + gearRect.height, new Color(0x201410)));
-            g.fill(cut(gearRect.x, gearRect.y, gearRect.width, gearRect.height, 10));
-            icon(g, 7, gearRect.x + 14, gearRect.y + 21, 22, hoverGear ? TEXT : MUTED);
+            // przyciemnienie pod tekstem (lewa strona i dół)
+            g.setPaint(new GradientPaint(0, 0, alpha(BG, 120), (float) (w * 0.55), 0, alpha(BG, 0)));
+            g.fillRect(0, 0, w, h);
+            g.setPaint(new GradientPaint(0, h * 0.45f, alpha(BG, 0), 0, h, alpha(BG, 200)));
+            g.fillRect(0, (int) (h * 0.42), w, h - (int) (h * 0.42));
 
-            verRect.setBounds(88, by, 212, 64);
-            g.setPaint(new GradientPaint(0, verRect.y, hoverVer ? new Color(0x3A2518) : new Color(0x2C1B12),
-                    0, verRect.y + verRect.height, new Color(0x201410)));
-            g.fill(cut(verRect.x, verRect.y, verRect.width, verRect.height, 10));
+            drawStatusPill(g, w);
+
+            // plakietka, tytuł i podpis
+            int x = 28;
             Profile ap = activeProfile();
-            String vid = ap != null ? ap.name : "Brak profilu";
-            String vsub = selected == null ? (loadingVersions ? "Wczytywanie..." : "Wybierz wersję")
-                    : selected.id() + "  \u00b7  " + typeLabel(selected.type());
-            if (selected != null) {
-                drawBlock(g, verRect.x + 10, verRect.y + 12, 40, selected.id().hashCode());
-            }
-            int textX = verRect.x + (selected != null ? 60 : 14);
-            int textMax = verRect.x + verRect.width - 34 - textX;
-            g.setFont(head(Font.BOLD, 19));
+            String when = ap == null || ap.used <= 0 ? "Jeszcze nie grano" : "Ostatnio grane: " + ago(ap.used);
+            String sub = ap == null ? when : when + " · " + ap.name;
+            g.setFont(body(Font.PLAIN, 16));
+            g.setColor(new Color(0xD3DCD8));
+            g.drawString(fit(g, sub, w - x - 28), x, h - 30);
+
+            float ts = h < 330 ? 34f : 42f;
+            g.setFont(head(Font.BOLD, ts));
             g.setColor(TEXT);
-            g.drawString(fit(g, vid, textMax), textX, verRect.y + 28);
-            g.setFont(body(Font.PLAIN, 13));
-            g.setColor(MUTED);
-            g.drawString(fit(g, vsub, textMax), textX, verRect.y + 48);
+            int line = (int) (ts * 1.3);
+            int base2 = h - 68;
+            g.drawString("czeka.", x, base2);
+            g.drawString("Twój świat", x, base2 - line);
+
+            g.setFont(tracked(mono(Font.BOLD, 13), 0.1f));
+            String badge = "JAVA EDITION";
+            int bw = tw(g, badge) + 26;
+            int bh = 28;
+            int by = base2 - line - (int) (ts * 0.72) - 18 - bh;
+            g.setColor(ACCENT_HI);
+            g.fill(new RoundRectangle2D.Double(x, by, bw, bh, 12, 12));
+            g.setColor(ON_ACCENT);
+            g.drawString(badge, x + 13, mid(g, by + bh / 2));
+
+            g.setClip(null);
+            g.setColor(BORDER);
+            g.setStroke(new BasicStroke(1f));
+            g.draw(new RoundRectangle2D.Double(0.5, 0.5, w - 1, h - 1, 28, 28));
+            g.dispose();
+        }
+
+        /** Prawy górny róg: stan połączenia i znajomi (kliknięcie otwiera listę znajomych). */
+        private void drawStatusPill(Graphics2D g, int w) {
+            String state = loadingVersions ? "łączenie" : online ? "online" : "offline";
+            boolean ok = !loadingVersions && online;
+            List<String> fs = friends();
+            int n = fs.size();
+            String label = n == 0 ? "dodaj znajomych" : n == 1 ? "1 znajomy" : n + " znajomych";
+            int shown = Math.min(3, n);
+
+            g.setFont(mono(Font.PLAIN, 15));
+            int stW = g.getFontMetrics().stringWidth(state);
+            int lbW = g.getFontMetrics().stringWidth(label);
+            int ph = 40;
+            int headsW = shown == 0 ? 0 : 28 + (shown - 1) * 18 + 10;
+            int pw = 18 + 10 + 10 + stW + 14 + 1 + 14 + headsW + lbW + 18 + 20;
+            int px = w - 22 - pw;
+            int py = 18;
+            int cy = py + ph / 2;
+            g.setColor(alpha(new Color(0x070B0F), 205));
+            g.fill(new RoundRectangle2D.Double(px, py, pw, ph, ph, ph));
+            g.setColor(hoverFriends ? alpha(ACCENT, 160) : alpha(Color.WHITE, 30));
+            g.setStroke(new BasicStroke(1f));
+            g.draw(new RoundRectangle2D.Double(px + 0.5, py + 0.5, pw - 1, ph - 1, ph, ph));
+
+            int x = px + 18;
+            if (ok) {
+                g.setPaint(new RadialGradientPaint(x + 5f, cy, 12f, new float[]{0f, 1f},
+                        new Color[]{alpha(GLOW, 110), alpha(GLOW, 0)}));
+                g.fillRect(x - 8, cy - 13, 26, 26);
+            }
+            g.setColor(ok ? ACCENT_HI : MUTED);
+            g.fill(new Ellipse2D.Double(x, cy - 5, 10, 10));
+            x += 20;
+            g.drawString(state, x, mid(g, cy));
+            x += stW + 14;
+            g.setColor(alpha(Color.WHITE, 36));
+            g.fillRect(x, py + 10, 1, ph - 20);
+            x += 15;
+            friendsRect.setBounds(x - 8, py, px + pw - x + 8, ph);
+            for (int i = 0; i < shown; i++) {
+                int hx = x + i * 18;
+                g.setColor(new Color(0x070B0F));
+                g.fill(new Ellipse2D.Double(hx - 2, cy - 16, 32, 32));
+                Graphics2D gh = (Graphics2D) g.create();
+                gh.clip(new Ellipse2D.Double(hx, cy - 14, 28, 28));
+                BufferedImage sk = friendSkins.get(fs.get(i));
+                drawHead(gh, sk == NO_SKIN ? null : sk, hx, cy - 14, 28);
+                gh.dispose();
+            }
+            x += headsW;
+            g.setColor(hoverFriends ? ACCENT_HI : TEXT);
+            g.drawString(label, x, mid(g, cy));
+            x += lbW + 8;
+            g.setStroke(new BasicStroke(1.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            g.drawLine(x, cy - 4, x + 4, cy);
+            g.drawLine(x + 4, cy, x, cy + 4);
+        }
+    }
+
+    // ------------------------------------------------------------------ dolny pasek (wersja, RAM, postęp, GRAJ)
+
+    private final class BottomBar extends JComponent {
+        private final Rectangle verRect = new Rectangle();
+        private final Rectangle ramRect = new Rectangle();
+        private final Rectangle playRect = new Rectangle();
+        private boolean hoverVer;
+        private boolean hoverRam;
+        private boolean hoverPlay;
+        private final long t0 = System.nanoTime();
+
+        BottomBar() {
+            setPreferredSize(new Dimension(10, 72));
+            MouseAdapter m = new MouseAdapter() {
+                @Override
+                public void mouseMoved(MouseEvent e) {
+                    boolean v = verRect.contains(e.getPoint());
+                    boolean r = ramRect.contains(e.getPoint());
+                    boolean p = playRect.contains(e.getPoint()) && !(busy || loadingVersions);
+                    if (v != hoverVer || r != hoverRam || p != hoverPlay) {
+                        hoverVer = v;
+                        hoverRam = r;
+                        hoverPlay = p;
+                        setCursor(Cursor.getPredefinedCursor(v || r || p ? Cursor.HAND_CURSOR : Cursor.DEFAULT_CURSOR));
+                        repaint();
+                    }
+                }
+
+                @Override
+                public void mouseExited(MouseEvent e) {
+                    hoverVer = false;
+                    hoverRam = false;
+                    hoverPlay = false;
+                    setCursor(Cursor.getDefaultCursor());
+                    repaint();
+                }
+
+                @Override
+                public void mouseReleased(MouseEvent e) {
+                    if (playRect.contains(e.getPoint())) {
+                        onPlay();
+                    } else if (verRect.contains(e.getPoint())) {
+                        openVersionPicker();
+                    } else if (ramRect.contains(e.getPoint())) {
+                        openSettings();
+                    }
+                }
+            };
+            addMouseListener(m);
+            addMouseMotionListener(m);
+        }
+
+        private String progressLabel() {
+            String what = progWhat == null ? "" : progWhat;
+            if ("Pobieranie".equals(what)) {
+                return "POBIERANIE PLIKÓW";
+            }
+            return what.toUpperCase(Locale.ROOT);
+        }
+
+        @Override
+        protected void paintComponent(Graphics g0) {
+            Graphics2D g = (Graphics2D) g0.create();
+            aa(g);
+            int w = getWidth();
+            int h = getHeight();
+            int cy = h / 2;
+            double time = (System.nanoTime() - t0) / 1e9;
+
+            g.setColor(PANEL);
+            g.fill(new RoundRectangle2D.Double(0, 0, w, h, 28, 28));
+            g.setColor(BORDER);
+            g.setStroke(new BasicStroke(1f));
+            g.draw(new RoundRectangle2D.Double(0.5, 0.5, w - 1, h - 1, 28, 28));
+
+            int bh = 46;
+
+            // wybór wersji
+            verRect.setBounds(14, cy - bh / 2, 156, bh);
+            g.setColor(hoverVer ? new Color(0x1C2832) : PANEL_HI);
+            g.fill(new RoundRectangle2D.Double(verRect.x, verRect.y, verRect.width, verRect.height, 20, 20));
+            g.setColor(hoverVer ? alpha(ACCENT, 120) : BORDER);
+            g.draw(new RoundRectangle2D.Double(verRect.x + 0.5, verRect.y + 0.5, verRect.width - 1, verRect.height - 1, 20, 20));
+            boolean hasVer = selected != null;
+            if (hasVer) {
+                g.setPaint(new RadialGradientPaint(verRect.x + 20f, cy, 11f, new float[]{0f, 1f},
+                        new Color[]{alpha(GLOW, 100), alpha(GLOW, 0)}));
+                g.fillRect(verRect.x + 8, cy - 12, 24, 24);
+            }
+            g.setColor(hasVer ? ACCENT_HI : MUTED);
+            g.fill(new Ellipse2D.Double(verRect.x + 15, cy - 5, 10, 10));
+            String vs = hasVer ? selected.id() : (loadingVersions ? "..." : "Wersja");
+            g.setFont(body(Font.PLAIN, 17));
+            g.setColor(TEXT);
+            g.drawString(fit(g, vs, verRect.width - 36 - 34), verRect.x + 36, mid(g, cy));
             g.setColor(MUTED);
             g.setStroke(new BasicStroke(1.8f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-            int cx = verRect.x + verRect.width - 20;
-            g.drawLine(cx - 5, verRect.y + 28, cx, verRect.y + 33);
-            g.drawLine(cx, verRect.y + 33, cx + 5, verRect.y + 28);
+            int chx = verRect.x + verRect.width - 22;
+            g.drawLine(chx - 5, cy - 2, chx, cy + 3);
+            g.drawLine(chx, cy + 3, chx + 5, cy - 2);
 
-            // statystyki
-            boolean stats = w >= 720;
-            int statsW = 160;
-            int statsX = w - 28 - statsW;
-            if (stats) {
-                String[][] rows = {
-                        {"RAM", formatGb(ramMb)},
-                        {"Mody", String.valueOf(modsCount)},
-                        {"Czas gry", formatPlaytime()}};
-                int sy = barY + (barH - 3 * 34) / 2;
-                for (int i = 0; i < rows.length; i++) {
-                    int yy = sy + i * 34;
-                    g.setFont(body(Font.PLAIN, 14));
-                    g.setColor(MUTED);
-                    g.drawString(rows[i][0], statsX, yy + 22);
-                    g.setFont(head(Font.BOLD, 20));
-                    g.setColor(TEXT);
-                    g.drawString(rows[i][1], statsX + statsW - g.getFontMetrics().stringWidth(rows[i][1]), yy + 23);
-                    g.setColor(BORDER);
-                    g.drawLine(statsX, yy + 30, statsX + statsW, yy + 30);
-                }
-            }
+            // RAM
+            ramRect.setBounds(verRect.x + verRect.width + 10, cy - bh / 2, 108, bh);
+            g.setColor(hoverRam ? new Color(0x1C2832) : PANEL_HI);
+            g.fill(new RoundRectangle2D.Double(ramRect.x, ramRect.y, ramRect.width, ramRect.height, 20, 20));
+            g.setColor(hoverRam ? alpha(ACCENT, 120) : BORDER);
+            g.setStroke(new BasicStroke(1f));
+            g.draw(new RoundRectangle2D.Double(ramRect.x + 0.5, ramRect.y + 0.5, ramRect.width - 1, ramRect.height - 1, 20, 20));
+            icon(g, 15, ramRect.x + 14, cy - 11, 22, ACCENT_HI);
+            g.setFont(body(Font.BOLD, 17));
+            g.setColor(TEXT);
+            g.drawString(formatGb(ramMb), ramRect.x + 46, mid(g, cy));
 
             // przycisk GRAJ
-            int availX = verRect.x + verRect.width + 24;
-            int availEnd = (stats ? statsX : w - 28) - 24;
-            int pw = Math.max(200, Math.min(310, availEnd - availX));
-            int px = availX + Math.max(0, (availEnd - availX - pw) / 2);
-            int ph = 88;
-            int py = barY + (barH - ph) / 2 - 4;
-            int skew = 24;
-            playPoly = new Polygon(
-                    new int[]{px + skew, px + pw, px + pw - skew, px},
-                    new int[]{py, py, py + ph, py + ph}, 4);
-
+            int pw = Math.max(150, Math.min(190, w / 6));
+            playRect.setBounds(w - 14 - pw, cy - 27, pw, 54);
             boolean disabled = busy || loadingVersions;
-            if (!disabled || (busy && !gameRunning)) {
-                double pulse = 0.5 + 0.5 * Math.sin(time * 2.4);
-                int gl = disabled ? 10 : (int) (14 + 8 * pulse + (hoverPlay ? 8 : 0));
+            if (!disabled) {
+                int gl = hoverPlay ? 16 : 10;
                 for (int i = gl; i >= 2; i -= 2) {
-                    g.setColor(alpha(GLOW, (int) ((disabled ? 6 : 12) * (1 - i / (double) (gl + 2)) + 2)));
+                    g.setColor(alpha(GLOW, (int) (10 * (1 - i / (double) (gl + 2)) + 2)));
                     g.setStroke(new BasicStroke(i * 2f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
-                    g.draw(playPoly);
+                    g.draw(new RoundRectangle2D.Double(playRect.x, playRect.y, playRect.width, playRect.height, 24, 24));
                 }
                 g.setStroke(new BasicStroke(1f));
             }
-            Shape oldClip = g.getClip();
-            g.clip(playPoly);
-            if (busy && !gameRunning && !indeterminate && progTotal > 0) {
-                g.setColor(ACCENT_DIM);
-                g.fillRect(px, py, pw, ph);
-                g.setPaint(new GradientPaint(px, py, ACCENT_HI, px, py + ph, ACCENT));
-                g.fillRect(px, py, (int) (pw * (progDone / (double) progTotal)), ph);
-            } else if (disabled) {
-                g.setColor(ACCENT_DIM);
-                g.fillRect(px, py, pw, ph);
-            } else {
-                g.setPaint(new GradientPaint(px, py, hoverPlay ? ACCENT_HI : ACCENT.brighter(),
-                        px, py + ph, hoverPlay ? ACCENT : ACCENT.darker()));
-                g.fillRect(px, py, pw, ph);
-                // połysk przesuwający się po przycisku
-                double sh = ((time * 0.35) % 2.2) - 0.6;
-                int sx = (int) (px + sh * pw);
-                g.setPaint(new GradientPaint(sx, 0, alpha(Color.WHITE, 0), sx + 40, 0, alpha(Color.WHITE, 60)));
-                g.fillRect(sx, py, 40, ph);
-                g.setPaint(new GradientPaint(sx + 40, 0, alpha(Color.WHITE, 60), sx + 80, 0, alpha(Color.WHITE, 0)));
-                g.fillRect(sx + 40, py, 40, ph);
-                g.setPaint(new GradientPaint(0, py, alpha(Color.WHITE, 50), 0, py + ph / 2f, alpha(Color.WHITE, 0)));
-                g.fillRect(px, py, pw, ph / 2);
-            }
-            g.setClip(oldClip);
+            g.setPaint(disabled ? new GradientPaint(0, playRect.y, ACCENT_DIM, 0, playRect.y + playRect.height, ACCENT_DIM)
+                    : new GradientPaint(0, playRect.y, hoverPlay ? new Color(0x5BFFB4) : ACCENT_HI,
+                    0, playRect.y + playRect.height, hoverPlay ? ACCENT_HI : ACCENT));
+            g.fill(new RoundRectangle2D.Double(playRect.x, playRect.y, playRect.width, playRect.height, 24, 24));
+            g.setFont(tracked(head(Font.BOLD, 22), 0.12f));
+            int labelW = tw(g, "GRAJ");
+            int total = 16 + 12 + labelW;
+            int sx = playRect.x + (playRect.width - total) / 2;
+            Color fg = disabled ? new Color(0x6FBF9A) : ON_ACCENT;
+            g.setColor(fg);
+            g.fill(new Polygon(new int[]{sx, sx, sx + 15}, new int[]{cy - 9, cy + 9, cy}, 3));
+            g.drawString("GRAJ", sx + 28, mid(g, cy));
 
-            String label;
-            String caption = null;
-            if (gameRunning) {
-                label = "GRA URUCHOMIONA";
-            } else if (busy) {
-                label = "PRZYGOTOWANIE...";
-                if (!indeterminate && progTotal > 0) {
-                    caption = progWhat + " " + progDone + "/" + progTotal;
+            // postęp
+            int zx = ramRect.x + ramRect.width + 28;
+            int zend = playRect.x - 28;
+            if (zend - zx >= 140) {
+                String label;
+                String pct = "";
+                double frac = 0;
+                boolean sweep = false;
+                if (gameRunning) {
+                    label = "GRA URUCHOMIONA";
+                    frac = 1;
+                } else if (busy) {
+                    if (!indeterminate && progTotal > 0) {
+                        frac = progDone / (double) progTotal;
+                        label = progressLabel();
+                        pct = Math.round(frac * 100) + "%";
+                    } else {
+                        label = "SPRAWDZANIE PLIKÓW";
+                        sweep = true;
+                    }
+                } else if (loadingVersions) {
+                    label = "WCZYTYWANIE WERSJI";
+                    sweep = true;
+                } else if (!isMicrosoft()) {
+                    label = "ZALOGUJ SIĘ, ŻEBY ZAGRAĆ";
+                } else if (selected == null) {
+                    label = "WYBIERZ WERSJĘ";
+                } else {
+                    label = "GOTOWY DO GRY";
                 }
-            } else if (loadingVersions) {
-                label = "WCZYTYWANIE...";
-            } else if (selected == null) {
-                label = "WYBIERZ WERSJĘ";
-            } else {
-                label = "GRAJ";
-            }
-            boolean big = label.length() <= 5;
-            g.setFont(head(Font.BOLD | Font.ITALIC, big ? 40 : 22));
-            fm = g.getFontMetrics();
-            int lx = px + (pw - fm.stringWidth(label)) / 2;
-            int ly = py + ph / 2 + fm.getAscent() / 2 - 4 - (caption != null ? 8 : 0);
-            g.setColor(disabled ? new Color(0xF0D2BF) : Color.WHITE);
-            g.drawString(label, lx, ly);
-            if (caption != null) {
-                g.setFont(body(Font.PLAIN, 12));
-                g.setColor(new Color(0xFFE2D0));
-                FontMetrics cf = g.getFontMetrics();
-                g.drawString(caption, px + (pw - cf.stringWidth(caption)) / 2, ly + 20);
+                int zw = zend - zx;
+                g.setFont(tracked(mono(Font.PLAIN, 12), 0.14f));
+                g.setColor(MUTED);
+                g.drawString(fit(g, label, zw - 56), zx, cy - 6);
+                if (!pct.isEmpty()) {
+                    g.setColor(TEXT);
+                    g.drawString(pct, zx + zw - tw(g, pct), cy - 6);
+                }
+                int by = cy + 8;
+                g.setColor(new Color(0x1A242D));
+                g.fill(new RoundRectangle2D.Double(zx, by, zw, 6, 6, 6));
+                Shape oldClip = g.getClip();
+                g.clip(new RoundRectangle2D.Double(zx, by, zw, 6, 6, 6));
+                if (sweep) {
+                    double seg = zw * 0.3;
+                    double pos = ((time * 0.55) % 1.3) * (zw + seg) - seg;
+                    g.setPaint(new GradientPaint((float) pos, 0, alpha(ACCENT, 0), (float) (pos + seg / 2), 0, ACCENT_HI));
+                    g.fillRect((int) pos, by, (int) (seg / 2) + 1, 6);
+                    g.setPaint(new GradientPaint((float) (pos + seg / 2), 0, ACCENT_HI, (float) (pos + seg), 0, alpha(ACCENT, 0)));
+                    g.fillRect((int) (pos + seg / 2), by, (int) (seg / 2) + 1, 6);
+                } else if (frac > 0) {
+                    int fw = (int) Math.max(6, zw * Math.min(1.0, frac));
+                    g.setColor(alpha(GLOW, 60));
+                    g.fillRect(zx, by - 2, fw, 10);
+                    g.setPaint(new GradientPaint(zx, 0, ACCENT, zx + zw, 0, ACCENT_HI));
+                    g.fillRect(zx, by, fw, 6);
+                }
+                g.setClip(oldClip);
             }
             g.dispose();
         }
     }
 
-    // ------------------------------------------------------------------ scena (generowane tło w stylu Minecrafta)
+    // ------------------------------------------------------------------ grafika sceny (generowana, w stylu Minecrafta)
+
+    private static final double LANTERN_X = 0.786;
+    private static final double LANTERN_Y = 0.585;
 
     private static int mix(int a, int b, double t) {
         t = Math.max(0, Math.min(1, t));
@@ -1092,99 +1307,75 @@ public class BushLaunch {
         }
     }
 
-    private static BufferedImage landscape(int w, int h) {
-        final int s = 5;
+    private static BufferedImage nightScene(int w, int h) {
+        final int s = 4;
         int lw = Math.max(8, w / s + 1);
         int lh = Math.max(8, h / s + 1);
         BufferedImage im = new BufferedImage(lw, lh, BufferedImage.TYPE_INT_RGB);
-        Random rnd = new Random(42);
+        Random rnd = new Random(1337);
         int horizon = (int) (lh * 0.50);
 
-        // niebo + słońce
-        double sunX = lw * 0.17;
-        double sunY = horizon * 0.80;
+        // niebo
         for (int y = 0; y < lh; y++) {
             double t = Math.min(1.0, y / (double) horizon);
-            int base = mix(0x3F7BC0, 0xF6BE7A, Math.pow(t, 1.4));
+            int c = mix(0x04080B, 0x3B5456, Math.pow(t, 1.6));
             for (int x = 0; x < lw; x++) {
-                double d = Math.hypot(x - sunX, (y - sunY) * 1.2) / (lw * 0.38);
-                int c = base;
-                if (d < 1) {
-                    c = mix(base, 0xFFE9A8, Math.pow(1 - d, 2) * 0.85);
-                }
                 im.setRGB(x, y, c);
             }
         }
-        for (int dy = -3; dy <= 3; dy++) {
-            for (int dx = -3; dx <= 3; dx++) {
-                px(im, (int) sunX + dx, (int) sunY + dy, 0xFFF6CF);
-            }
-        }
-        // chmury
-        for (int i = 0; i < 7; i++) {
-            int cx = rnd.nextInt(lw);
-            int cy = 4 + rnd.nextInt(Math.max(1, (int) (horizon * 0.42)));
-            int cw = 14 + rnd.nextInt(22);
-            for (int r = 0; r < 3; r++) {
-                int off = r == 1 ? 0 : 3;
-                for (int x = off; x < cw - off; x++) {
-                    int col = r == 2 ? 0xE9C99C : 0xFBE7C4;
-                    px(im, cx + x, cy + r, col);
-                }
-            }
-        }
+        nightMountains(im, rnd, horizon, lh * 0.30, 0x34495A, 0.8, 0x88A2AF);
+        nightMountains(im, rnd, horizon + 2, lh * 0.19, 0x1B2D34, 1.9, 0x4B6671);
 
-        // góry
-        mountains(im, rnd, horizon, lh * 0.34, 0x76899C, true, 0.9);
-        mountains(im, rnd, horizon + 2, lh * 0.20, 0x4E6F5E, false, 2.1);
+        // mgła przy horyzoncie
+        for (int y = Math.max(0, horizon - 9); y < Math.min(lh, horizon + 13); y++) {
+            double a = Math.max(0, 1 - Math.abs(y - horizon - 1) / 11.0) * 0.38;
+            for (int x = 0; x < lw; x++) {
+                im.setRGB(x, y, mix(im.getRGB(x, y) & 0xFFFFFF, 0x4A6461, a));
+            }
+        }
 
         // wzgórza z lasem
+        int[] hillTop = new int[lw];
         for (int x = 0; x < lw; x++) {
-            int top = horizon + 2 + (int) (4 * Math.sin(x * 0.06 + 1) + 3 * Math.sin(x * 0.17));
+            int top = horizon + 4 + (int) (3 * Math.sin(x * 0.07 + 1) + 2 * Math.sin(x * 0.19));
+            hillTop[x] = top;
             for (int y = top; y < lh; y++) {
-                int c = (rnd.nextInt(4) == 0) ? 0x2F6B24 : 0x3C7F2B;
-                px(im, x, y, mix(c, 0x1E4A18, (y - top) / (double) lh * 0.5));
+                int n = rnd.nextInt(6);
+                int c = n == 0 ? 0x10201A : 0x0C1914;
+                px(im, x, y, mix(c, 0x070F0C, (y - top) / (lh * 0.45)));
             }
         }
         for (int i = 0; i < lw / 3; i++) {
             int x = rnd.nextInt(lw);
-            int top = horizon + 2 + (int) (4 * Math.sin(x * 0.06 + 1) + 3 * Math.sin(x * 0.17));
-            tree(im, rnd, x, top + 3, 2 + rnd.nextInt(3), 3 + rnd.nextInt(2));
+            pine(im, rnd, x, hillTop[x] + 2, 5 + rnd.nextInt(6), 2 + rnd.nextInt(2), 0x0A1813);
         }
 
-        // pierwszy plan - trawa
-        int groundTop = (int) (lh * 0.66);
+        // pierwszy plan
+        int groundTop = (int) (lh * 0.68);
         for (int x = 0; x < lw; x++) {
-            int gy = groundTop + (int) (3 * Math.sin(x * 0.05) + 2 * Math.sin(x * 0.19 + 2));
+            int gy = groundTop + (int) (2 * Math.sin(x * 0.05) + 1.5 * Math.sin(x * 0.21 + 2));
             for (int y = gy; y < lh; y++) {
-                int n = rnd.nextInt(5);
-                int c = n == 0 ? 0x5CA033 : n == 1 ? 0x356E22 : n == 2 ? 0x4C8F2B : 0x417C27;
-                px(im, x, y, mix(c, 0x1D3F14, (y - gy) / (double) Math.max(1, lh - gy) * 0.55));
+                int n = rnd.nextInt(6);
+                int c = n == 0 ? 0x16291F : n == 1 ? 0x0A130F : 0x0D1914;
+                if (y == gy) {
+                    c = 0x1C3427;
+                }
+                px(im, x, y, mix(c, 0x050A08, (y - gy) / (double) Math.max(1, lh - gy) * 0.6));
             }
         }
-        // bloki ziemi po bokach
-        for (int x = 0; x < lw; x++) {
-            double edge = Math.min(x, lw - 1 - x) / (double) lw;
-            if (edge < 0.18) {
-                int depth = (int) ((0.18 - edge) * lh * 1.1);
-                int gy = groundTop + 6;
-                for (int y = gy; y < gy + depth && y < lh; y++) {
-                    int n = rnd.nextInt(4);
-                    px(im, x, y, n == 0 ? 0x6B4A2C : n == 1 ? 0x7A5634 : 0x5E3F25);
-                }
-                for (int y = gy - 1; y <= gy; y++) {
-                    px(im, x, y, 0x5CA033);
-                }
-            }
-        }
-        // duże drzewa po bokach
-        bigTree(im, rnd, (int) (lw * 0.05), groundTop + 4, (int) (lh * 0.62));
-        bigTree(im, rnd, (int) (lw * 0.94), groundTop + 2, (int) (lh * 0.5));
+
+        // duże sosny po lewej
+        bigPine(im, rnd, (int) (lw * 0.06), groundTop + 4, (int) (lh * 0.84), (int) (lw * 0.085));
+        bigPine(im, rnd, (int) (lw * 0.17), groundTop + 2, (int) (lh * 0.58), (int) (lw * 0.06));
+        bigPine(im, rnd, (int) (lw * 0.30), groundTop, (int) (lh * 0.36), (int) (lw * 0.04));
+
+        // dom z latarnią po prawej
+        house(im, rnd, (int) (lw * 0.74), groundTop + 2, lw - (int) (lw * 0.74) + 4, (int) (lh * 0.27), lw, lh);
         return im;
     }
 
-    private static void mountains(BufferedImage im, Random rnd, int horizon, double amp, int color,
-                                  boolean snow, double freq) {
+    private static void nightMountains(BufferedImage im, Random rnd, int horizon, double amp, int color,
+                                       double freq, int rim) {
         double p1 = rnd.nextDouble() * 6;
         double p2 = rnd.nextDouble() * 6;
         double p3 = rnd.nextDouble() * 6;
@@ -1194,90 +1385,271 @@ public class BushLaunch {
             double hgt = amp * (0.5 + 0.28 * Math.sin(u + p1) + 0.16 * Math.sin(u * 2.3 + p2)
                     + 0.08 * Math.sin(u * 5.1 + p3));
             int top = horizon - (int) hgt;
-            for (int y = top; y < horizon + 4 && y < im.getHeight(); y++) {
+            for (int y = top; y < horizon + 5 && y < im.getHeight(); y++) {
                 int c = color;
                 int n = rnd.nextInt(5);
                 if (n == 0) {
-                    c = mix(color, 0x000000, 0.12);
+                    c = mix(color, 0x000000, 0.14);
                 } else if (n == 1) {
-                    c = mix(color, 0xFFFFFF, 0.08);
+                    c = mix(color, 0xFFFFFF, 0.05);
                 }
-                if (snow && hgt > amp * 0.62 && y < top + (int) ((hgt - amp * 0.62) * 0.55) + 1) {
-                    c = rnd.nextInt(4) == 0 ? 0xD6DEE6 : 0xF1F5F8;
+                if (y - top < 2) {
+                    c = mix(c, rim, 0.5);
                 }
-                px(im, x, y, mix(c, 0xF1B880, Math.max(0, (y - (horizon - amp)) / (amp + 4)) * 0.25));
+                px(im, x, y, mix(c, 0x0A1216, Math.max(0, (y - top) / (amp + 5)) * 0.5));
             }
         }
     }
 
-    private static void tree(BufferedImage im, Random rnd, int x, int baseY, int trunk, int r) {
+    private static void pine(BufferedImage im, Random rnd, int cx, int baseY, int height, int halfW, int color) {
+        int trunk = Math.max(1, height / 6);
         for (int y = 0; y < trunk; y++) {
-            px(im, x, baseY - y, 0x5A3F22);
+            px(im, cx, baseY - y, mix(color, 0x000000, 0.3));
         }
-        for (int dy = -r; dy <= r; dy++) {
-            for (int dx = -r - 1; dx <= r + 1; dx++) {
-                if (dx * dx / 1.6 + dy * dy <= r * r + 1) {
-                    int n = rnd.nextInt(3);
-                    px(im, x + dx, baseY - trunk - r + dy + r / 2, n == 0 ? 0x2E7A22 : n == 1 ? 0x3F9130 : 0x266B1C);
-                }
+        int tiers = Math.max(3, height / 4);
+        int crown = Math.max(1, height - trunk);
+        for (int y = 0; y < crown; y++) {
+            double f = y / (double) crown;
+            double tierPos = (f * tiers) % 1.0;
+            int wy = (int) Math.round(halfW * (1 - f) * (0.55 + 0.45 * (1 - tierPos)));
+            for (int dx = -wy; dx <= wy; dx++) {
+                int n = rnd.nextInt(5);
+                int c = n == 0 ? mix(color, 0xFFFFFF, 0.06) : n == 1 ? mix(color, 0x000000, 0.25) : color;
+                px(im, cx + dx, baseY - trunk - y, c);
             }
         }
     }
 
-    private static void bigTree(BufferedImage im, Random rnd, int x, int baseY, int height) {
-        int tw = Math.max(5, im.getWidth() / 28);
-        for (int y = 0; y < height; y++) {
-            for (int dx = 0; dx < tw; dx++) {
-                int n = rnd.nextInt(4);
-                px(im, x + dx - tw / 2, baseY - y, n == 0 ? 0x4B3319 : n == 1 ? 0x6B4A27 : 0x5A3F22);
+    private static void bigPine(BufferedImage im, Random rnd, int cx, int baseY, int height, int halfW) {
+        int color = 0x060E0B;
+        int trunkW = Math.max(2, halfW / 6);
+        int trunk = height / 7;
+        for (int y = 0; y < trunk; y++) {
+            for (int dx = -trunkW / 2; dx <= trunkW / 2; dx++) {
+                px(im, cx + dx, baseY - y, rnd.nextInt(3) == 0 ? 0x120C08 : 0x0B0806);
             }
         }
-        int r = Math.max(10, im.getWidth() / 9);
-        int cy = baseY - height;
-        for (int dy = -r; dy <= r * 0.7; dy++) {
-            for (int dx = -r; dx <= r; dx++) {
-                if (dx * dx + dy * dy * 1.3 <= r * r) {
-                    int n = rnd.nextInt(4);
-                    px(im, x + dx, cy + dy, n == 0 ? 0x2E7A22 : n == 1 ? 0x4AA03A : n == 2 ? 0x3A8A2A : 0x276B1C);
+        int tiers = Math.max(5, height / 9);
+        int crown = height - trunk;
+        for (int y = 0; y < crown; y++) {
+            double f = y / (double) crown;
+            double tierPos = (f * tiers) % 1.0;
+            double edge = (1 - f) * (0.45 + 0.55 * (1 - tierPos));
+            int wy = (int) Math.round(halfW * edge);
+            for (int dx = -wy; dx <= wy; dx++) {
+                int n = rnd.nextInt(6);
+                int c = n == 0 ? 0x0C1A14 : n == 1 ? 0x040A08 : color;
+                // jaśniejsza krawędź od strony latarni (prawa)
+                if (dx > wy - 2 && n < 3) {
+                    c = 0x12281F;
+                }
+                px(im, cx + dx, baseY - trunk - y, c);
+            }
+        }
+    }
+
+    private static void house(BufferedImage im, Random rnd, int x0, int groundY, int w, int h, int lw, int lh) {
+        int wallTop = groundY - h;
+        int baseH = Math.max(3, h / 4);
+        for (int y = wallTop; y <= groundY; y++) {
+            for (int x = x0; x < x0 + w; x++) {
+                boolean base = y > groundY - baseH;
+                int n = rnd.nextInt(4);
+                int c = base ? (n == 0 ? 0x2E3438 : n == 1 ? 0x22282C : 0x292F33)
+                        : (n == 0 ? 0x3B2A1C : n == 1 ? 0x2D2015 : 0x35261A);
+                if (!base && (y - wallTop) % 3 == 0) {
+                    c = mix(c, 0x000000, 0.32);
+                }
+                if (x == x0 || x == x0 + 1) {
+                    c = mix(c, 0x000000, 0.35);
+                }
+                px(im, x, y, c);
+            }
+        }
+        // dach
+        int roofH = Math.max(4, h / 3);
+        for (int r = 0; r < roofH; r++) {
+            int inset = (int) (r * 1.15);
+            for (int x = x0 - 3 + inset; x < x0 + w + 3 - inset; x++) {
+                int n = rnd.nextInt(4);
+                int c = mix(n == 0 ? 0x1F1814 : 0x17110E, 0x0A0705, r / (double) roofH * 0.6);
+                if (r == 0) {
+                    c = mix(c, 0x4A3A2E, 0.35);
+                }
+                px(im, x, wallTop - 1 - r, c);
+            }
+        }
+        // okno
+        int wx = x0 + (int) (w * 0.58);
+        int wy = wallTop + (int) (h * 0.22);
+        int ww = Math.max(4, (int) (w * 0.14));
+        int wh = Math.max(5, (int) (h * 0.30));
+        for (int y = wy - 1; y <= wy + wh; y++) {
+            for (int x = wx - 1; x <= wx + ww; x++) {
+                boolean frame = y == wy - 1 || y == wy + wh || x == wx - 1 || x == wx + ww;
+                px(im, x, y, frame ? 0x4A3626 : 0x0A1311);
+            }
+        }
+        // latarnia
+        int lx = (int) (LANTERN_X * lw);
+        int ly = (int) (LANTERN_Y * lh);
+        px(im, lx, ly - 4, 0x1A1410);
+        px(im, lx, ly - 3, 0x1A1410);
+        for (int dy = -2; dy <= 2; dy++) {
+            for (int dx = -1; dx <= 1; dx++) {
+                px(im, lx + dx, ly + dy, dy == 0 ? 0xE6FFF1 : 0x5CF2A6);
+            }
+        }
+    }
+
+    /** Miniatury kart wiadomości: 0 = zielone kryształy w skale, 1 = wioska nocą. */
+    private static BufferedImage thumb(int kind, int w, int h) {
+        BufferedImage im = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
+        Random rnd = new Random(kind * 77L + 5);
+        if (kind == 0) {
+            for (int y = 0; y < h; y++) {
+                for (int x = 0; x < w; x++) {
+                    int c = mix(0x0B1512, 0x1B2B26, rnd.nextDouble() * 0.7);
+                    if ((x / 5 + y / 5) % 2 == 0) {
+                        c = mix(c, 0x000000, 0.18);
+                    }
+                    im.setRGB(x, y, c);
                 }
             }
+            double[][] cs = {{0.30, 0.62, 9}, {0.58, 0.78, 7}, {0.72, 0.50, 11}, {0.14, 0.80, 6}, {0.46, 0.38, 6}};
+            for (double[] c : cs) {
+                int cx = (int) (c[0] * w);
+                int cy = (int) (c[1] * h);
+                int len = (int) c[2];
+                for (int y = 0; y < h; y++) {
+                    for (int x = 0; x < w; x++) {
+                        double d = Math.hypot(x - cx, y - cy) / (len * 1.8);
+                        if (d < 1) {
+                            im.setRGB(x, y, mix(im.getRGB(x, y) & 0xFFFFFF, 0x19E68C, Math.pow(1 - d, 2) * 0.55));
+                        }
+                    }
+                }
+                for (int i = -1; i <= 1; i++) {
+                    int l = len - Math.abs(i) * 3;
+                    for (int k = 0; k < l; k++) {
+                        int half = Math.max(0, (int) ((1 - k / (double) l) * 1.6));
+                        for (int dx = -half; dx <= half; dx++) {
+                            px(im, cx + i * 3 + dx, cy - k + Math.abs(i) * 2, k > l / 2 ? 0xB8FFDD : (dx < 0 ? 0x3DF0A0 : 0x17B872));
+                        }
+                    }
+                }
+            }
+        } else {
+            for (int y = 0; y < h; y++) {
+                for (int x = 0; x < w; x++) {
+                    im.setRGB(x, y, mix(0x0E1D24, 0x213A40, y / (double) h * 0.8 + rnd.nextDouble() * 0.12));
+                }
+            }
+            for (int i = 0; i < 11; i++) {
+                int bx = 2 + rnd.nextInt(w - 8);
+                int by = 6 + rnd.nextInt(h - 12);
+                int bw = 4 + rnd.nextInt(4);
+                int bhh = 3 + rnd.nextInt(3);
+                for (int y = by; y < by + bhh; y++) {
+                    for (int x = bx; x < bx + bw; x++) {
+                        px(im, x, y, rnd.nextInt(3) == 0 ? 0x6A4A31 : 0x4D3524);
+                    }
+                }
+                for (int x = bx - 1; x <= bx + bw; x++) {
+                    px(im, x, by - 1, 0x1D1410);
+                }
+                px(im, bx + 1, by + 1, 0xFFB35A);
+                if (bw > 5) {
+                    px(im, bx + bw - 2, by + 1, 0xFFC878);
+                }
+            }
+            for (int i = 0; i < 6; i++) {
+                int x = rnd.nextInt(w);
+                int y = rnd.nextInt(h);
+                px(im, x, y, 0xFFB35A);
+            }
         }
+        return im;
     }
 
     // ------------------------------------------------------------------ skin
 
+    private static String httpText(String url) throws IOException {
+        URLConnection c = new URL(url).openConnection();
+        c.setConnectTimeout(6000);
+        c.setReadTimeout(8000);
+        c.setRequestProperty("User-Agent", "BushLaunch/" + LAUNCHER_VERSION);
+        try (InputStream in = c.getInputStream()) {
+            return new String(in.readAllBytes(), StandardCharsets.UTF_8);
+        }
+    }
+
+    private static BufferedImage httpImage(String url) throws IOException {
+        URLConnection c = new URL(url).openConnection();
+        c.setConnectTimeout(6000);
+        c.setReadTimeout(8000);
+        c.setRequestProperty("User-Agent", "BushLaunch/" + LAUNCHER_VERSION);
+        try (InputStream in = c.getInputStream()) {
+            return ImageIO.read(in);
+        }
+    }
+
+    /** Pobiera prawdziwy skin gracza: najpierw z serwerów Mojang (po UUID), awaryjnie z minotar; z cache na dysku. */
+    private BufferedImage fetchSkin(String name, String uuid) {
+        Path cache = baseDir.resolve("skins").resolve(name + ".png");
+        BufferedImage img = null;
+        try {
+            String id = uuid;
+            if (id == null || id.isBlank()) {
+                id = Json.str(Json.get(Json.parse(httpText("https://api.mojang.com/users/profiles/minecraft/" + name)), "id"));
+            }
+            Object prof = Json.parse(httpText("https://sessionserver.mojang.com/session/minecraft/profile/" + id));
+            List<Object> props = Json.list(Json.get(prof, "properties"));
+            if (props != null) {
+                for (Object prop : props) {
+                    if ("textures".equals(Json.str(Json.get(prop, "name")))) {
+                        String val = Json.str(Json.get(prop, "value"));
+                        Object tex = Json.parse(new String(java.util.Base64.getDecoder().decode(val), StandardCharsets.UTF_8));
+                        String url = Json.str(Json.get(tex, "textures", "SKIN", "url"));
+                        if (url != null) {
+                            img = httpImage(url);
+                        }
+                    }
+                }
+            }
+        } catch (Exception ignored) {
+            // spróbujemy zapasowego źródła
+        }
+        if (img == null) {
+            try {
+                img = httpImage("https://minotar.net/skin/" + name);
+            } catch (Exception ignored) {
+                // zostaje cache
+            }
+        }
+        try {
+            if (img != null) {
+                Files.createDirectories(cache.getParent());
+                ImageIO.write(img, "png", cache.toFile());
+            } else if (Files.exists(cache)) {
+                img = ImageIO.read(cache.toFile());
+            }
+        } catch (IOException ignored) {
+            // brak cache
+        }
+        return img;
+    }
+
     private void loadSkinAsync() {
         final String n = nick;
+        final String uuid = msAccount != null ? msAccount.uuid() : null;
         if (!validNick(n)) {
             skin = null;
             frame.repaint();
             return;
         }
         Thread t = new Thread(() -> {
-            BufferedImage img = null;
-            Path cache = baseDir.resolve("skins").resolve(n + ".png");
-            try {
-                URLConnection c = new URL("https://minotar.net/skin/" + n).openConnection();
-                c.setConnectTimeout(6000);
-                c.setReadTimeout(8000);
-                c.setRequestProperty("User-Agent", "BushLaunch/" + LAUNCHER_VERSION);
-                try (InputStream in = c.getInputStream()) {
-                    img = ImageIO.read(in);
-                }
-                if (img != null) {
-                    Files.createDirectories(cache.getParent());
-                    ImageIO.write(img, "png", cache.toFile());
-                }
-            } catch (Exception e) {
-                try {
-                    if (Files.exists(cache)) {
-                        img = ImageIO.read(cache.toFile());
-                    }
-                } catch (IOException ignored) {
-                    // brak skina - użyjemy domyślnej postaci
-                }
-            }
-            BufferedImage result = img;
+            BufferedImage result = fetchSkin(n, uuid);
             SwingUtilities.invokeLater(() -> {
                 if (n.equals(nick)) {
                     skin = result;
@@ -1287,6 +1659,154 @@ public class BushLaunch {
         }, "skin");
         t.setDaemon(true);
         t.start();
+    }
+
+    // ------------------------------------------------------------------ znajomi (lista lokalna)
+
+    private List<String> friends() {
+        List<String> out = new ArrayList<>();
+        for (String f : config.getProperty("friends", "").split(",")) {
+            if (validNick(f.trim())) {
+                out.add(f.trim());
+            }
+        }
+        return out;
+    }
+
+    private void saveFriends(List<String> list) {
+        config.setProperty("friends", String.join(",", list));
+        saveConfig();
+        loadFriendSkins();
+        if (hero != null) {
+            hero.repaint();
+        }
+    }
+
+    private void loadFriendSkins() {
+        for (String f : friends()) {
+            if (friendSkins.containsKey(f)) {
+                continue;
+            }
+            friendSkins.put(f, NO_SKIN);
+            Thread t = new Thread(() -> {
+                BufferedImage img = fetchSkin(f, null);
+                if (img != null) {
+                    friendSkins.put(f, img);
+                    SwingUtilities.invokeLater(() -> {
+                        if (hero != null) {
+                            hero.repaint();
+                        }
+                    });
+                }
+            }, "friend-skin");
+            t.setDaemon(true);
+            t.start();
+        }
+    }
+
+    private void openFriendsDialog() {
+        JPanel body = new JPanel(new BorderLayout(0, 12));
+        JDialog d = makeDialog("Znajomi", body, 440, 440);
+        JTextField nickField = field("");
+        JLabel err = new JLabel(" ");
+        err.setForeground(new Color(0xFF6B5A));
+        err.setFont(body(Font.PLAIN, 12));
+        FlatButton add = new FlatButton("Dodaj", true);
+        JPanel addRow = new JPanel(new BorderLayout(10, 0));
+        addRow.setOpaque(false);
+        addRow.add(nickField, BorderLayout.CENTER);
+        addRow.add(add, BorderLayout.EAST);
+        JPanel head = new JPanel(new BorderLayout(0, 4));
+        head.setOpaque(false);
+        head.add(addRow, BorderLayout.NORTH);
+        head.add(err, BorderLayout.SOUTH);
+
+        JPanel list = new JPanel();
+        list.setOpaque(false);
+        list.setLayout(new BoxLayout(list, BoxLayout.Y_AXIS));
+        JPanel wrap = new JPanel(new BorderLayout());
+        wrap.setOpaque(false);
+        wrap.add(list, BorderLayout.NORTH);
+        JScrollPane scroll = darkScroll(wrap);
+        scroll.getViewport().setOpaque(false);
+
+        Runnable[] refresh = new Runnable[1];
+        refresh[0] = () -> {
+            list.removeAll();
+            List<String> fs = friends();
+            for (String f : fs) {
+                JPanel row = new JPanel(new BorderLayout(10, 0)) {
+                    @Override
+                    protected void paintComponent(Graphics g0) {
+                        Graphics2D g = (Graphics2D) g0.create();
+                        aa(g);
+                        card(g, 0, 0, getWidth(), getHeight(), 10, false);
+                        Graphics2D gh = (Graphics2D) g.create();
+                        gh.clip(new RoundRectangle2D.Double(10, 8, 30, 30, 8, 8));
+                        BufferedImage sk = friendSkins.get(f);
+                        drawHead(gh, sk == NO_SKIN ? null : sk, 10, 8, 30);
+                        gh.dispose();
+                        g.dispose();
+                    }
+                };
+                row.setOpaque(false);
+                row.setBorder(new EmptyBorder(0, 52, 0, 8));
+                row.setPreferredSize(new Dimension(10, 46));
+                row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 46));
+                JLabel l = new JLabel(f);
+                l.setForeground(TEXT);
+                l.setFont(body(Font.BOLD, 15));
+                FlatButton rm = new FlatButton("Usuń", false);
+                rm.setBorder(new EmptyBorder(6, 14, 6, 14));
+                rm.addActionListener(e -> {
+                    List<String> cur = friends();
+                    cur.remove(f);
+                    saveFriends(cur);
+                    refresh[0].run();
+                });
+                row.add(l, BorderLayout.CENTER);
+                row.add(rm, BorderLayout.EAST);
+                list.add(row);
+                list.add(javax.swing.Box.createVerticalStrut(6));
+            }
+            if (fs.isEmpty()) {
+                JLabel none = new JLabel("Nie masz jeszcze znajomych. Wpisz nick gracza i kliknij Dodaj.");
+                none.setForeground(MUTED);
+                none.setFont(body(Font.PLAIN, 13));
+                list.add(none);
+            }
+            list.revalidate();
+            list.repaint();
+        };
+        add.addActionListener(e -> {
+            String n = nickField.getText().trim();
+            List<String> cur = friends();
+            if (!validNick(n)) {
+                err.setText("Nick: 3-16 znaków (litery, cyfry, _).");
+            } else if (cur.stream().anyMatch(x -> x.equalsIgnoreCase(n))) {
+                err.setText("Ten gracz już jest na liście.");
+            } else if (cur.size() >= 30) {
+                err.setText("Maksymalnie 30 znajomych.");
+            } else {
+                cur.add(n);
+                err.setText(" ");
+                nickField.setText("");
+                saveFriends(cur);
+                refresh[0].run();
+            }
+        });
+        nickField.addActionListener(e -> add.doClick());
+        refresh[0].run();
+
+        FlatButton close = new FlatButton("Zamknij", false);
+        close.addActionListener(e -> d.dispose());
+        JPanel south = new JPanel(new BorderLayout());
+        south.setOpaque(false);
+        south.add(close, BorderLayout.EAST);
+        body.add(head, BorderLayout.NORTH);
+        body.add(scroll, BorderLayout.CENTER);
+        body.add(south, BorderLayout.SOUTH);
+        d.setVisible(true);
     }
 
     private static void part(Graphics2D g, BufferedImage s, int sx, int sy, int sw, int sh,
@@ -1307,7 +1827,8 @@ public class BushLaunch {
 
     static void drawHead(Graphics2D g0, BufferedImage s, int x, int y, int size) {
         Graphics2D g = (Graphics2D) g0.create();
-        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
+        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+        g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
         if (s == null) {
             g.setColor(new Color(0xB98B63));
             g.fillRect(x, y, size, size);
@@ -1321,70 +1842,6 @@ public class BushLaunch {
             part(g, s, 40, 8, 8, 8, x - size * 0.04, y - size * 0.04, size * 1.08, size * 1.08, false);
         }
         g.dispose();
-    }
-
-    static void drawFigure(Graphics2D g0, BufferedImage s, double cx, double top, double u) {
-        Graphics2D g = (Graphics2D) g0.create();
-        g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_NEAREST_NEIGHBOR);
-        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_OFF);
-
-        g.setColor(new Color(0, 0, 0, 80));
-        g.fill(new Ellipse2D.Double(cx - 6 * u, top + 31.3 * u, 12 * u, 1.8 * u));
-
-        double bodyX = cx - 4 * u;
-        if (s == null) {
-            g.setColor(new Color(0x3B3B8C));
-            g.fill(new Rectangle2DHelper(cx - 4 * u, top + 20 * u, 8 * u, 12 * u).r());
-            g.setColor(new Color(0x00A8A8));
-            g.fill(new Rectangle2DHelper(bodyX, top + 8 * u, 8 * u, 12 * u).r());
-            g.setColor(new Color(0xB98B63));
-            g.fill(new Rectangle2DHelper(bodyX - 4 * u, top + 8 * u, 4 * u, 12 * u).r());
-            g.fill(new Rectangle2DHelper(bodyX + 8 * u, top + 8 * u, 4 * u, 12 * u).r());
-            g.fill(new Rectangle2DHelper(cx - 4 * u, top, 8 * u, 8 * u).r());
-            g.setColor(new Color(0x3B2A1E));
-            g.fill(new Rectangle2DHelper(cx - 4 * u, top, 8 * u, 2 * u).r());
-            g.dispose();
-            return;
-        }
-
-        boolean modern = s.getHeight() >= 64;
-        boolean slim = modern && ((s.getRGB(47, 24) >>> 24) == 0);
-        int aw = slim ? 3 : 4;
-
-        // nogi
-        part(g, s, 4, 20, 4, 12, cx - 4 * u, top + 20 * u, 4 * u, 12 * u, false);
-        if (modern) {
-            part(g, s, 20, 52, 4, 12, cx, top + 20 * u, 4 * u, 12 * u, false);
-            part(g, s, 4, 36, 4, 12, cx - 4 * u, top + 20 * u, 4 * u, 12 * u, false);
-            part(g, s, 4, 52, 4, 12, cx, top + 20 * u, 4 * u, 12 * u, false);
-        } else {
-            part(g, s, 4, 20, 4, 12, cx, top + 20 * u, 4 * u, 12 * u, true);
-        }
-        // tułów
-        part(g, s, 20, 20, 8, 12, bodyX, top + 8 * u, 8 * u, 12 * u, false);
-        if (modern) {
-            part(g, s, 20, 36, 8, 12, bodyX, top + 8 * u, 8 * u, 12 * u, false);
-        }
-        // ręce
-        part(g, s, 44, 20, aw, 12, bodyX - aw * u, top + 8 * u, aw * u, 12 * u, false);
-        if (modern) {
-            part(g, s, 44, 36, aw, 12, bodyX - aw * u, top + 8 * u, aw * u, 12 * u, false);
-            part(g, s, 36, 52, aw, 12, bodyX + 8 * u, top + 8 * u, aw * u, 12 * u, false);
-            part(g, s, 52, 52, aw, 12, bodyX + 8 * u, top + 8 * u, aw * u, 12 * u, false);
-        } else {
-            part(g, s, 44, 20, aw, 12, bodyX + 8 * u, top + 8 * u, aw * u, 12 * u, true);
-        }
-        // głowa
-        part(g, s, 8, 8, 8, 8, cx - 4 * u, top, 8 * u, 8 * u, false);
-        part(g, s, 40, 8, 8, 8, cx - 4.35 * u, top - 0.35 * u, 8.7 * u, 8.7 * u, false);
-        g.dispose();
-    }
-
-    /** Mała pomoc, żeby nie importować Rectangle2D w każdym miejscu. */
-    private record Rectangle2DHelper(double x, double y, double w, double h) {
-        java.awt.geom.Rectangle2D r() {
-            return new java.awt.geom.Rectangle2D.Double(x, y, w, h);
-        }
     }
 
     static void drawBlock(Graphics2D g, int x, int y, int size, long seed) {
@@ -1641,12 +2098,8 @@ public class BushLaunch {
         }
         recentCards.removeAll();
         List<Profile> list = recentProfiles();
-        for (int i = 0; i < 3; i++) {
-            if (i < list.size()) {
-                recentCards.add(new ProfileCard(list.get(i), false));
-            } else {
-                recentCards.add(new JLabel());
-            }
+        for (int i = 0; i < Math.min(3, list.size()); i++) {
+            recentCards.add(new RecentRow(list.get(i)));
         }
         recentCards.revalidate();
         recentCards.repaint();
@@ -1656,7 +2109,7 @@ public class BushLaunch {
         JPanel p = new JPanel(new BorderLayout(0, 18));
         p.setBackground(BG);
         p.setBorder(new EmptyBorder(26, 30, 26, 30));
-        p.add(pageTitle("Moje profile",
+        p.add(pageTitle("Wersje",
                 "Każdy profil ma własną wersję gry. Kliknij kartę, żeby go wybrać, a ikonę suwaków, żeby edytować."),
                 BorderLayout.NORTH);
 
@@ -1988,103 +2441,6 @@ public class BushLaunch {
         }
     }
 
-    // ------------------------------------------------------------------ szafka
-
-    private JComponent buildLockerPage() {
-        JPanel p = new JPanel(new BorderLayout(24, 0));
-        p.setBackground(BG);
-        p.setBorder(new EmptyBorder(26, 30, 26, 30));
-
-        JComponent preview = new JComponent() {
-            @Override
-            protected void paintComponent(Graphics g0) {
-                Graphics2D g = (Graphics2D) g0.create();
-                aa(g);
-                g.setColor(PANEL);
-                g.fill(cut(0, 0, getWidth(), getHeight(), 26));
-                double u = Math.max(4, getHeight() * 0.66 / 32.0);
-                drawFigure(g, skin, getWidth() / 2.0, (getHeight() - 32 * u) / 2, u);
-                g.dispose();
-            }
-        };
-
-        JPanel form = new JPanel();
-        form.setOpaque(false);
-        form.setLayout(new BoxLayout(form, BoxLayout.Y_AXIS));
-        form.setPreferredSize(new Dimension(340, 10));
-
-        JLabel title = new JLabel("Szafka");
-        title.setForeground(TEXT);
-        title.setFont(head(Font.BOLD, 34));
-        title.setAlignmentX(Component.LEFT_ALIGNMENT);
-        JLabel sub = new JLabel("<html>Skin jest pobierany z Twojego konta Microsoft.<br>Zmienisz go na minecraft.net.</html>");
-        sub.setForeground(MUTED);
-        sub.setFont(body(Font.PLAIN, 13));
-        sub.setAlignmentX(Component.LEFT_ALIGNMENT);
-        JLabel lab = new JLabel("Konto");
-        lab.setForeground(TEXT);
-        lab.setFont(body(Font.PLAIN, 14));
-        lab.setAlignmentX(Component.LEFT_ALIGNMENT);
-        JLabel who = new JLabel(nick.isEmpty() ? "Nie zalogowano" : nick);
-        who.setForeground(ACCENT_HI);
-        who.setFont(head(Font.BOLD, 22));
-        who.setAlignmentX(Component.LEFT_ALIGNMENT);
-        lockerName = who;
-        FlatButton account = new FlatButton("Konto Microsoft", true);
-        account.setAlignmentX(Component.LEFT_ALIGNMENT);
-        account.addActionListener(e -> openAccountDialog());
-
-        form.add(title);
-        form.add(javax.swing.Box.createVerticalStrut(8));
-        form.add(sub);
-        form.add(javax.swing.Box.createVerticalStrut(26));
-        form.add(lab);
-        form.add(javax.swing.Box.createVerticalStrut(6));
-        form.add(who);
-        form.add(javax.swing.Box.createVerticalStrut(16));
-        form.add(account);
-
-        p.add(preview, BorderLayout.CENTER);
-        p.add(form, BorderLayout.EAST);
-        return p;
-    }
-
-    private JComponent buildSoon(String title, String text, int iconKind) {
-        JPanel p = new JPanel(new BorderLayout());
-        p.setBackground(BG);
-        p.setBorder(new EmptyBorder(26, 30, 26, 30));
-        p.add(pageTitle(title, text), BorderLayout.NORTH);
-        JComponent soon = new JComponent() {
-            @Override
-            protected void paintComponent(Graphics g0) {
-                Graphics2D g = (Graphics2D) g0.create();
-                aa(g);
-                card(g, 0, 0, getWidth(), getHeight(), 26, false);
-                int cx = getWidth() / 2;
-                int cy = getHeight() / 2;
-                g.setPaint(new RadialGradientPaint(cx, cy - 20, 150f,
-                        new float[]{0f, 1f}, new Color[]{alpha(GLOW, 60), alpha(GLOW, 0)}));
-                g.fillRect(0, 0, getWidth(), getHeight());
-                icon(g, iconKind, cx - 28, cy - 78, 56, ACCENT_HI);
-                g.setFont(head(Font.BOLD, 40));
-                g.setColor(TEXT);
-                String s = "WKRÓTCE";
-                g.drawString(s, cx - g.getFontMetrics().stringWidth(s) / 2, cy + 22);
-                g.setFont(body(Font.PLAIN, 14));
-                g.setColor(MUTED);
-                String u2 = "Pracujemy nad tym - zajrzyj w następnej wersji launchera.";
-                g.drawString(u2, cx - g.getFontMetrics().stringWidth(u2) / 2, cy + 52);
-                g.dispose();
-            }
-        };
-        JPanel wrap = new JPanel(new BorderLayout());
-        wrap.setOpaque(false);
-        wrap.setBorder(new EmptyBorder(18, 0, 0, 0));
-        wrap.add(soon, BorderLayout.CENTER);
-        p.add(wrap, BorderLayout.CENTER);
-        return p;
-    }
-
     private JComponent pageTitle(String title, String sub) {
         JPanel p = new JPanel();
         p.setOpaque(false);
@@ -2152,7 +2508,7 @@ public class BushLaunch {
     private static final class DarkScrollBarUI extends javax.swing.plaf.basic.BasicScrollBarUI {
         @Override
         protected void configureScrollBarColors() {
-            thumbColor = new Color(0x4A3A32);
+            thumbColor = new Color(0x2B3A46);
             trackColor = BG;
         }
 
@@ -2200,7 +2556,7 @@ public class BushLaunch {
         root.setBorder(BorderFactory.createLineBorder(ACCENT_DIM));
 
         JPanel headBar = new JPanel(new BorderLayout());
-        headBar.setBackground(new Color(0x0B0706));
+        headBar.setBackground(new Color(0x080B0F));
         JLabel t = new JLabel(title);
         t.setForeground(TEXT);
         t.setFont(head(Font.BOLD, 19));
@@ -2271,9 +2627,6 @@ public class BushLaunch {
         nick = msAccount != null ? msAccount.name() : "";
         skin = null;
         loadSkinAsync();
-        if (lockerName != null) {
-            lockerName.setText(nick.isEmpty() ? "Nie zalogowano" : nick);
-        }
         if (sidebarUser != null) {
             sidebarUser.repaint();
         }
@@ -2692,7 +3045,7 @@ public class BushLaunch {
 
     private void openSettings() {
         JPanel body = new JPanel(new BorderLayout(0, 12));
-        JDialog d = makeDialog("Ustawienia", body, 440, 430);
+        JDialog d = makeDialog("Ustawienia", body, 440, 490);
 
         int maxRam = 8192;
         try {
@@ -2737,11 +3090,17 @@ public class BushLaunch {
             d.dispose();
             checkForUpdates(true);
         });
-        JPanel links = new JPanel(new GridLayout(3, 1, 0, 8));
+        FlatButton console = new FlatButton("Konsola (log launchera i gry)", false);
+        console.addActionListener(e -> {
+            d.dispose();
+            showPage("console");
+        });
+        JPanel links = new JPanel(new GridLayout(4, 1, 0, 8));
         links.setOpaque(false);
         links.add(openGame);
         links.add(openBase);
         links.add(checkUpd);
+        links.add(console);
 
         FlatButton save = new FlatButton("Zapisz", true);
         save.addActionListener(e -> {
@@ -2981,6 +3340,7 @@ public class BushLaunch {
                 appendLog("Brak połączenia z serwerami Mojang (" + e.getMessage()
                         + "). Pokazuję tylko wersje pobrane wcześniej.");
                 list = installer.installedVersions();
+                online = false;
             }
             List<VersionEntry> result = list;
             SwingUtilities.invokeLater(() -> {
@@ -3306,7 +3666,7 @@ public class BushLaunch {
         WinButton(int kind, Runnable action) {
             super(action);
             this.kind = kind;
-            setPreferredSize(new Dimension(46, 34));
+            setPreferredSize(new Dimension(50, 46));
         }
 
         @Override
@@ -3317,7 +3677,7 @@ public class BushLaunch {
                 g.setColor(kind == 2 ? new Color(0xC42B1C) : alpha(Color.WHITE, 24));
                 g.fillRect(0, 0, getWidth(), getHeight());
             }
-            g.setColor(TEXT);
+            g.setColor(hover ? TEXT : MUTED);
             g.setStroke(new BasicStroke(1.3f));
             int cx = getWidth() / 2;
             int cy = getHeight() / 2;
@@ -3345,7 +3705,7 @@ public class BushLaunch {
             setBorderPainted(false);
             setFocusPainted(false);
             setOpaque(false);
-            setForeground(Color.WHITE);
+            setForeground(primary ? ON_ACCENT : TEXT);
             setFont(body(Font.BOLD, 14));
             setBorder(new EmptyBorder(11, 24, 11, 24));
             setCursor(Cursor.getPredefinedCursor(Cursor.HAND_CURSOR));
@@ -3368,8 +3728,8 @@ public class BushLaunch {
         protected void paintComponent(Graphics g0) {
             Graphics2D g = (Graphics2D) g0.create();
             aa(g);
-            Color top = primary ? (hover ? new Color(0xFF8A3D) : new Color(0xF2691A)) : (hover ? new Color(0x40291C) : new Color(0x2E1D14));
-            Color bot = primary ? (hover ? new Color(0xE8590C) : new Color(0xCF4A08)) : (hover ? new Color(0x2E1D14) : new Color(0x22150F));
+            Color top = primary ? (hover ? new Color(0x5BFFB4) : ACCENT_HI) : (hover ? new Color(0x243340) : new Color(0x1A2530));
+            Color bot = primary ? (hover ? ACCENT_HI : ACCENT) : (hover ? new Color(0x1A2530) : new Color(0x131C25));
             g.setPaint(new GradientPaint(0, 0, top, 0, getHeight(), bot));
             g.fill(cut(0, 0, getWidth(), getHeight(), 10));
             g.setPaint(new GradientPaint(0, 0, alpha(Color.WHITE, primary ? 60 : 24), 0, getHeight() / 2f, alpha(Color.WHITE, 0)));
@@ -3383,7 +3743,7 @@ public class BushLaunch {
 
     /**
      * Ikony: 0 gamepad, 1 warstwy, 2 kostka, 3 koszulka, 4 torba, 5 prezent, 6 konsola,
-     * 7 suwaki (ustawienia), 8 przekreślone oko.
+     * 7 suwaki, 8 przekreślone oko, 9 folder, 10 dokument, 12 dom, 13 puzzle (mody), 14 koło zębate, 15 układ scalony (RAM).
      */
     static void icon(Graphics2D g0, int kind, int x, int y, int s, Color color) {
         Graphics2D g = (Graphics2D) g0.create();
@@ -3440,6 +3800,43 @@ public class BushLaunch {
                 g.setColor(color);
                 g.drawOval((int) (x + s * 0.2), (int) (y + s * 0.3 - 4), 8, 8);
                 g.drawOval((int) (x + s * 0.62), (int) (y + s * 0.7 - 4), 8, 8);
+            }
+            case 12 -> {
+                g.draw(poly(false, x + s * 0.05, y + s * 0.50, x + s * 0.5, y + s * 0.10, x + s * 0.95, y + s * 0.50));
+                g.draw(poly(false, x + s * 0.18, y + s * 0.42, x + s * 0.18, y + s * 0.92,
+                        x + s * 0.82, y + s * 0.92, x + s * 0.82, y + s * 0.42));
+                g.draw(poly(false, x + s * 0.40, y + s * 0.92, x + s * 0.40, y + s * 0.64,
+                        x + s * 0.60, y + s * 0.64, x + s * 0.60, y + s * 0.92));
+            }
+            case 13 -> {
+                java.awt.geom.Area a = new java.awt.geom.Area(
+                        new java.awt.geom.Rectangle2D.Double(x + s * 0.10, y + s * 0.28, s * 0.70, s * 0.64));
+                a.add(new java.awt.geom.Area(new Ellipse2D.Double(x + s * 0.34, y + s * 0.06, s * 0.26, s * 0.26)));
+                a.add(new java.awt.geom.Area(new Ellipse2D.Double(x + s * 0.72, y + s * 0.46, s * 0.26, s * 0.26)));
+                g.draw(a);
+            }
+            case 14 -> {
+                double cx = x + s / 2.0;
+                double cy = y + s / 2.0;
+                g.draw(new Ellipse2D.Double(cx - s * 0.28, cy - s * 0.28, s * 0.56, s * 0.56));
+                g.draw(new Ellipse2D.Double(cx - s * 0.11, cy - s * 0.11, s * 0.22, s * 0.22));
+                g.setStroke(new BasicStroke(Math.max(2f, s * 0.13f), BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER));
+                for (int i = 0; i < 8; i++) {
+                    double ang = i * Math.PI / 4;
+                    g.draw(new java.awt.geom.Line2D.Double(cx + Math.cos(ang) * s * 0.30, cy + Math.sin(ang) * s * 0.30,
+                            cx + Math.cos(ang) * s * 0.45, cy + Math.sin(ang) * s * 0.45));
+                }
+            }
+            case 15 -> {
+                g.draw(new RoundRectangle2D.Double(x + s * 0.22, y + s * 0.22, s * 0.56, s * 0.56, 4, 4));
+                g.draw(new java.awt.geom.Rectangle2D.Double(x + s * 0.38, y + s * 0.38, s * 0.24, s * 0.24));
+                for (int i = 0; i < 3; i++) {
+                    double o = s * (0.34 + i * 0.16);
+                    g.draw(new java.awt.geom.Line2D.Double(x + o, y + s * 0.06, x + o, y + s * 0.22));
+                    g.draw(new java.awt.geom.Line2D.Double(x + o, y + s * 0.78, x + o, y + s * 0.94));
+                    g.draw(new java.awt.geom.Line2D.Double(x + s * 0.06, y + o, x + s * 0.22, y + o));
+                    g.draw(new java.awt.geom.Line2D.Double(x + s * 0.78, y + o, x + s * 0.94, y + o));
+                }
             }
             case 9 -> {
                 Path2D f = new Path2D.Double();

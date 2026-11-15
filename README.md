@@ -2,9 +2,11 @@
 
 Launcher Minecraft by BushStar (Java, Swing).
 
-**Wersja 0.7.0** - wybierasz profil (wersję), wpisujesz nick i klikasz **GRAJ**. Launcher sam pobiera grę
+**Wersja 0.8.0** - wybierasz profil (wersję), wpisujesz nick i klikasz **GRAJ**. Launcher sam pobiera grę
 (klient, biblioteki, assets) z serwerów Mojang i ją uruchamia.
 
+- **nowy wygląd (0.8.0)**: zielony panel - menu boczne (Graj, Wersje, Mody, Aktualności, Ustawienia) z listą ostatnio granych wersji, nocna scena z plakietką JAVA EDITION, karty aktualności oraz dolny pasek z wyborem wersji, RAM-em, postępem i przyciskiem GRAJ; konsola jest w Ustawieniach
+- **znajomi**: lista lokalna (kliknij „znajomych” w prawym górnym rogu sceny, dodaj nicki); skiny pobierane z serwerów Mojang
 - **profile**: tworzysz własne profile (nazwa + wersja gry), zmieniasz im wersję, duplikujesz i usuwasz; zapisują się w `config.properties`
 - lista wszystkich wersji z oficjalnego manifestu Mojang (domyślnie tylko release, snapshoty po zaznaczeniu)
 - logowanie kontem **Microsoft** (tylko konta premium, w przeglądarce z wyborem konta, sesja zapamiętana); trybu offline już nie ma
@@ -75,15 +77,15 @@ Adres aktualizacji wstawia workflow (z nazwy repozytorium); w buildzie lokalnym 
 mvn package
 ```
 
-Powstaje `target/BushLaunch-0.7.0.jar` oraz `target/BushLaunch.exe`. Wymagana Java 17+ i Maven.
+Powstaje `target/BushLaunch-0.8.0.jar` oraz `target/BushLaunch.exe`. Wymagana Java 17+ i Maven.
 
 Instalator (Windows, JDK 21 + [Inno Setup 6](https://jrsoftware.org/isdl.php)):
 
 ```
 jlink --module-path "%JAVA_HOME%\jmods" --add-modules ALL-MODULE-PATH --output runtime --strip-debug --no-header-files --no-man-pages --compress zip-6
-mkdir input && copy target\BushLaunch-0.7.0.jar input\
-jpackage --type app-image --name BushLaunch --app-version 0.7.0 --vendor BushStar --input input --main-jar BushLaunch-0.7.0.jar --main-class pl.bushstar.bushlaunch.BushLaunch --runtime-image runtime --icon installer\bushlaunch.ico --dest dist
-iscc /DAppVersion=0.7.0 installer\BushLaunch.iss
+mkdir input && copy target\BushLaunch-0.8.0.jar input\
+jpackage --type app-image --name BushLaunch --app-version 0.8.0 --vendor BushStar --input input --main-jar BushLaunch-0.8.0.jar --main-class pl.bushstar.bushlaunch.BushLaunch --runtime-image runtime --icon installer\bushlaunch.ico --dest dist
+iscc /DAppVersion=0.8.0 installer\BushLaunch.iss
 ```
 
 Wynik: `dist/BushLaunch-Setup.exe`. Na GitHubie robi to samo `.github/workflows/build.yml`

@@ -1,9 +1,9 @@
 ﻿; Instalator BushLaunch (Inno Setup 6).
-; Budowanie: iscc installer\BushLaunch.iss /DAppVersion=0.7.0
+; Budowanie: iscc installer\BushLaunch.iss /DAppVersion=0.8.0
 ; Wymaga wcześniej zbudowanego folderu dist\BushLaunch (jpackage --type app-image, z wbudowaną Javą).
 
 #ifndef AppVersion
-  #define AppVersion "0.7.0"
+  #define AppVersion "0.8.0"
 #endif
 #define AppName "BushLaunch"
 #define AppExe "BushLaunch.exe"
