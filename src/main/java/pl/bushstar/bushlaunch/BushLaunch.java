@@ -213,10 +213,52 @@ public class BushLaunch {
         return new RoundRectangle2D.Double(x, y, w, h, arc, arc);
     }
 
-    /** Logo: zielona litera B w ciemnym kwadracie z zieloną ramką. */
+    /** Logo BushStar (logo.png w zasobach); gdyby go zabrakło, rysowana jest zielona litera B. */
+    private static final BufferedImage LOGO = loadLogo();
+    private static final Map<Integer, BufferedImage> LOGO_CACHE = new HashMap<>();
+
+    private static BufferedImage loadLogo() {
+        try (InputStream in = BushLaunch.class.getResourceAsStream("/logo.png")) {
+            return in == null ? null : ImageIO.read(in);
+        } catch (IOException e) {
+            return null;
+        }
+    }
+
+    /** Skaluje logo w kilku krokach (co połowę), dzięki czemu małe ikony są gładkie, a nie poszarpane. */
+    private static synchronized BufferedImage logoScaled(int size) {
+        BufferedImage cached = LOGO_CACHE.get(size);
+        if (cached != null) {
+            return cached;
+        }
+        BufferedImage cur = LOGO;
+        while (cur.getWidth() / 2 >= size) {
+            BufferedImage half = new BufferedImage(cur.getWidth() / 2, cur.getHeight() / 2, BufferedImage.TYPE_INT_ARGB);
+            Graphics2D hg = half.createGraphics();
+            hg.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            hg.drawImage(cur, 0, 0, half.getWidth(), half.getHeight(), null);
+            hg.dispose();
+            cur = half;
+        }
+        BufferedImage fin = new BufferedImage(size, size, BufferedImage.TYPE_INT_ARGB);
+        Graphics2D fg = fin.createGraphics();
+        fg.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+        fg.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
+        fg.drawImage(cur, 0, 0, size, size, null);
+        fg.dispose();
+        LOGO_CACHE.put(size, fin);
+        return fin;
+    }
+
+    /** Logo: ikona BushStar (zielone B z iskrą na ciemnym tle). */
     static void logoMark(Graphics2D g0, int x, int y, int s) {
         Graphics2D g = (Graphics2D) g0.create();
         aa(g);
+        if (LOGO != null) {
+            g.drawImage(logoScaled(s), x, y, null);
+            g.dispose();
+            return;
+        }
         g.setColor(new Color(0x0B2A1E));
         g.fill(new RoundRectangle2D.Double(x, y, s, s, s * 0.32, s * 0.32));
         g.setColor(ACCENT);
@@ -273,6 +315,7 @@ public class BushLaunch {
     private JPanel modsList;
     private JLabel modsInfo;
     private Component sidebarUser;
+    private Component titleAvatar;
 
     /** Profil gracza: nazwa + wersja gry. Zapisywany w config.properties. */
     private static final class Profile {
@@ -431,7 +474,31 @@ public class BushLaunch {
             }
         }));
         buttons.add(new WinButton(2, () -> System.exit(0)));
-        bar.add(buttons, BorderLayout.EAST);
+        Clickable avatarBtn = new Clickable(this::openAccountDialog) {
+            @Override
+            protected void paintComponent(Graphics g0) {
+                Graphics2D g = (Graphics2D) g0.create();
+                aa(g);
+                int size = 30;
+                drawAvatar(g, skin, (getWidth() - size) / 2 - 2, (getHeight() - size) / 2, size,
+                        selfState(), new Color(0x080B0F));
+                if (hover) {
+                    g.setColor(alpha(ACCENT, 170));
+                    g.setStroke(new BasicStroke(1.4f));
+                    g.draw(new RoundRectangle2D.Double((getWidth() - size) / 2.0 - 2 + 0.5, (getHeight() - size) / 2.0 + 0.5,
+                            size - 1, size - 1, size * 0.26, size * 0.26));
+                }
+                g.dispose();
+            }
+        };
+        avatarBtn.setPreferredSize(new Dimension(56, 46));
+        avatarBtn.setToolTipText("Konto");
+        titleAvatar = avatarBtn;
+        JPanel east = new JPanel(new BorderLayout());
+        east.setOpaque(false);
+        east.add(avatarBtn, BorderLayout.WEST);
+        east.add(buttons, BorderLayout.CENTER);
+        bar.add(east, BorderLayout.EAST);
 
         final int[] press = new int[2];
         MouseAdapter drag = new MouseAdapter() {
@@ -548,10 +615,7 @@ public class BushLaunch {
                 int h = getHeight() - 10;
                 g.translate(16, 5);
                 card(g, 0, 0, w, h, 14, hover);
-                Graphics2D gh = (Graphics2D) g.create();
-                gh.clip(new RoundRectangle2D.Double(14, (h - 40) / 2.0, 40, 40, 8, 8));
-                drawHead(gh, skin, 14, (h - 40) / 2, 40);
-                gh.dispose();
+                drawAvatar(g, skin, 14, (h - 40) / 2, 40, selfState(), new Color(0x10171E));
                 int tx = 66;
                 g.setFont(head(Font.BOLD, 17));
                 g.setColor(TEXT);
@@ -838,7 +902,7 @@ public class BushLaunch {
             super(() -> { });
             this.label = label;
             this.title = title;
-            this.thumb = thumb(kind, 40, 32);
+            this.thumb = thumb(kind, 200, 160);
             this.onClick = () -> showPage("news");
         }
 
@@ -885,13 +949,9 @@ public class BushLaunch {
 
     private final class HeroPanel extends JComponent {
         private BufferedImage scene;
-        private int sceneW;
-        private int sceneH;
         private final long t0 = System.nanoTime();
         /** Świetliki: x (0-1), y (0-1), faza, prędkość. */
         private final double[][] flies = new double[16][4];
-        /** Gwiazdy: x (0-1), y (0-0.46), rozmiar, faza migotania. */
-        private final double[][] stars = new double[110][4];
         private final Rectangle friendsRect = new Rectangle();
         private boolean hoverFriends;
 
@@ -923,12 +983,6 @@ public class BushLaunch {
             addMouseListener(fm);
             addMouseMotionListener(fm);
             Random r = new Random(11);
-            for (double[] st : stars) {
-                st[0] = r.nextDouble();
-                st[1] = Math.pow(r.nextDouble(), 1.3) * 0.46;
-                st[2] = 0.8 + r.nextDouble() * 1.2;
-                st[3] = r.nextDouble() * Math.PI * 2;
-            }
             for (double[] f : flies) {
                 f[0] = r.nextDouble();
                 f[1] = 0.42 + r.nextDouble() * 0.35;
@@ -946,21 +1000,12 @@ public class BushLaunch {
             double time = (System.nanoTime() - t0) / 1e9;
 
             g.setClip(new RoundRectangle2D.Double(0, 0, w, h, 28, 28));
-            if (scene == null || sceneW != w || sceneH != h) {
-                scene = nightScene(w, h);
-                sceneW = w;
-                sceneH = h;
+            if (scene == null) {
+                scene = smoothScene(SCENE_W, SCENE_H);
             }
-            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BILINEAR);
+            g.setRenderingHint(RenderingHints.KEY_INTERPOLATION, RenderingHints.VALUE_INTERPOLATION_BICUBIC);
+            g.setRenderingHint(RenderingHints.KEY_RENDERING, RenderingHints.VALUE_RENDER_QUALITY);
             g.drawImage(scene, 0, 0, w, h, null);
-
-            // gwiazdy (lekko migoczą)
-            for (double[] st : stars) {
-                double tw = 0.5 + 0.5 * Math.sin(time * (0.6 + st[2] * 0.4) + st[3]);
-                int a = (int) (70 + 150 * tw * (1 - st[1] / 0.6));
-                g.setColor(alpha(new Color(0xE6F4EE), Math.max(20, Math.min(255, a))));
-                g.fill(new Ellipse2D.Double(st[0] * w, st[1] * h, st[2], st[2]));
-            }
 
             // zielona latarnia przy domu
             float lx = (float) (w * LANTERN_X);
@@ -1040,7 +1085,7 @@ public class BushLaunch {
             int stW = g.getFontMetrics().stringWidth(state);
             int lbW = g.getFontMetrics().stringWidth(label);
             int ph = 40;
-            int headsW = shown == 0 ? 0 : 28 + (shown - 1) * 18 + 10;
+            int headsW = shown == 0 ? 0 : 28 + (shown - 1) * 36 + 10;
             int pw = 18 + 10 + 10 + stW + 14 + 1 + 14 + headsW + lbW + 18 + 20;
             int px = w - 22 - pw;
             int py = 18;
@@ -1067,14 +1112,10 @@ public class BushLaunch {
             x += 15;
             friendsRect.setBounds(x - 8, py, px + pw - x + 8, ph);
             for (int i = 0; i < shown; i++) {
-                int hx = x + i * 18;
-                g.setColor(new Color(0x070B0F));
-                g.fill(new Ellipse2D.Double(hx - 2, cy - 16, 32, 32));
-                Graphics2D gh = (Graphics2D) g.create();
-                gh.clip(new Ellipse2D.Double(hx, cy - 14, 28, 28));
+                int hx = x + i * 36;
                 BufferedImage sk = friendSkins.get(fs.get(i));
-                drawHead(gh, sk == NO_SKIN ? null : sk, hx, cy - 14, 28);
-                gh.dispose();
+                drawAvatar(g, sk == NO_SKIN ? null : sk, hx, cy - 14, 28,
+                        presenceOf(fs.get(i))[0], new Color(0x070B0F));
             }
             x += headsW;
             g.setColor(hoverFriends ? ACCENT_HI : TEXT);
@@ -1288,10 +1329,12 @@ public class BushLaunch {
         }
     }
 
-    // ------------------------------------------------------------------ grafika sceny (generowana, w stylu Minecrafta)
+    // ------------------------------------------------------------------ grafika sceny (gładka, renderowana - bez pikseli)
 
     private static final double LANTERN_X = 0.786;
     private static final double LANTERN_Y = 0.585;
+    private static final int SCENE_W = 1280;
+    private static final int SCENE_H = 680;
 
     private static int mix(int a, int b, double t) {
         t = Math.max(0, Math.min(1, t));
@@ -1301,275 +1344,489 @@ public class BushLaunch {
         return (r << 16) | (g << 8) | bl;
     }
 
-    private static void px(BufferedImage im, int x, int y, int rgb) {
-        if (x >= 0 && y >= 0 && x < im.getWidth() && y < im.getHeight()) {
-            im.setRGB(x, y, rgb);
-        }
+    private static double hash1(int n) {
+        n = (n << 13) ^ n;
+        return 1.0 - ((n * (n * n * 15731 + 789221) + 1376312589) & 0x7fffffff) / 1073741824.0;
     }
 
-    private static BufferedImage nightScene(int w, int h) {
-        final int s = 4;
-        int lw = Math.max(8, w / s + 1);
-        int lh = Math.max(8, h / s + 1);
-        BufferedImage im = new BufferedImage(lw, lh, BufferedImage.TYPE_INT_RGB);
-        Random rnd = new Random(1337);
-        int horizon = (int) (lh * 0.50);
-
-        // niebo
-        for (int y = 0; y < lh; y++) {
-            double t = Math.min(1.0, y / (double) horizon);
-            int c = mix(0x04080B, 0x3B5456, Math.pow(t, 1.6));
-            for (int x = 0; x < lw; x++) {
-                im.setRGB(x, y, c);
-            }
-        }
-        nightMountains(im, rnd, horizon, lh * 0.30, 0x34495A, 0.8, 0x88A2AF);
-        nightMountains(im, rnd, horizon + 2, lh * 0.19, 0x1B2D34, 1.9, 0x4B6671);
-
-        // mgła przy horyzoncie
-        for (int y = Math.max(0, horizon - 9); y < Math.min(lh, horizon + 13); y++) {
-            double a = Math.max(0, 1 - Math.abs(y - horizon - 1) / 11.0) * 0.38;
-            for (int x = 0; x < lw; x++) {
-                im.setRGB(x, y, mix(im.getRGB(x, y) & 0xFFFFFF, 0x4A6461, a));
-            }
-        }
-
-        // wzgórza z lasem
-        int[] hillTop = new int[lw];
-        for (int x = 0; x < lw; x++) {
-            int top = horizon + 4 + (int) (3 * Math.sin(x * 0.07 + 1) + 2 * Math.sin(x * 0.19));
-            hillTop[x] = top;
-            for (int y = top; y < lh; y++) {
-                int n = rnd.nextInt(6);
-                int c = n == 0 ? 0x10201A : 0x0C1914;
-                px(im, x, y, mix(c, 0x070F0C, (y - top) / (lh * 0.45)));
-            }
-        }
-        for (int i = 0; i < lw / 3; i++) {
-            int x = rnd.nextInt(lw);
-            pine(im, rnd, x, hillTop[x] + 2, 5 + rnd.nextInt(6), 2 + rnd.nextInt(2), 0x0A1813);
-        }
-
-        // pierwszy plan
-        int groundTop = (int) (lh * 0.68);
-        for (int x = 0; x < lw; x++) {
-            int gy = groundTop + (int) (2 * Math.sin(x * 0.05) + 1.5 * Math.sin(x * 0.21 + 2));
-            for (int y = gy; y < lh; y++) {
-                int n = rnd.nextInt(6);
-                int c = n == 0 ? 0x16291F : n == 1 ? 0x0A130F : 0x0D1914;
-                if (y == gy) {
-                    c = 0x1C3427;
-                }
-                px(im, x, y, mix(c, 0x050A08, (y - gy) / (double) Math.max(1, lh - gy) * 0.6));
-            }
-        }
-
-        // duże sosny po lewej
-        bigPine(im, rnd, (int) (lw * 0.06), groundTop + 4, (int) (lh * 0.84), (int) (lw * 0.085));
-        bigPine(im, rnd, (int) (lw * 0.17), groundTop + 2, (int) (lh * 0.58), (int) (lw * 0.06));
-        bigPine(im, rnd, (int) (lw * 0.30), groundTop, (int) (lh * 0.36), (int) (lw * 0.04));
-
-        // dom z latarnią po prawej
-        house(im, rnd, (int) (lw * 0.74), groundTop + 2, lw - (int) (lw * 0.74) + 4, (int) (lh * 0.27), lw, lh);
-        return im;
+    private static double vnoise(double x, int seed) {
+        int i = (int) Math.floor(x);
+        double f = x - i;
+        double u = f * f * (3 - 2 * f);
+        return hash1(i * 31 + seed * 1013) * (1 - u) + hash1((i + 1) * 31 + seed * 1013) * u;
     }
 
-    private static void nightMountains(BufferedImage im, Random rnd, int horizon, double amp, int color,
-                                       double freq, int rim) {
-        double p1 = rnd.nextDouble() * 6;
-        double p2 = rnd.nextDouble() * 6;
-        double p3 = rnd.nextDouble() * 6;
-        int lw = im.getWidth();
-        for (int x = 0; x < lw; x++) {
-            double u = x / (double) lw * freq * 6;
-            double hgt = amp * (0.5 + 0.28 * Math.sin(u + p1) + 0.16 * Math.sin(u * 2.3 + p2)
-                    + 0.08 * Math.sin(u * 5.1 + p3));
-            int top = horizon - (int) hgt;
-            for (int y = top; y < horizon + 5 && y < im.getHeight(); y++) {
-                int c = color;
-                int n = rnd.nextInt(5);
-                if (n == 0) {
-                    c = mix(color, 0x000000, 0.14);
-                } else if (n == 1) {
-                    c = mix(color, 0xFFFFFF, 0.05);
-                }
-                if (y - top < 2) {
-                    c = mix(c, rim, 0.5);
-                }
-                px(im, x, y, mix(c, 0x0A1216, Math.max(0, (y - top) / (amp + 5)) * 0.5));
+    private static double fbm(double x, int seed, int oct) {
+        double a = 1;
+        double s = 0;
+        double n = 0;
+        for (int o = 0; o < oct; o++) {
+            s += a * vnoise(x, seed + o * 17);
+            n += a;
+            x *= 2.07;
+            a *= 0.5;
+        }
+        return s / n;
+    }
+
+    private static int clamp255(int v) {
+        return Math.max(0, Math.min(255, v));
+    }
+
+    /** Warstwa z przezroczystością (premultiplied - dzięki temu rozmycie nie ciemni krawędzi). */
+    private static BufferedImage newLayer(int w, int h) {
+        return new BufferedImage(w, h, BufferedImage.TYPE_INT_ARGB_PRE);
+    }
+
+    private static Graphics2D layerGfx(BufferedImage im) {
+        Graphics2D g = im.createGraphics();
+        aa(g);
+        return g;
+    }
+
+    private static void boxPass(int[] in, int[] out, int w, int h, int r, boolean horiz) {
+        int len = horiz ? w : h;
+        int lines = horiz ? h : w;
+        int stride = horiz ? 1 : w;
+        int lineStep = horiz ? w : 1;
+        int div = 2 * r + 1;
+        for (int l = 0; l < lines; l++) {
+            int base = l * lineStep;
+            long sa = 0;
+            long sr = 0;
+            long sg = 0;
+            long sb = 0;
+            for (int k = -r; k <= r; k++) {
+                int p = in[base + Math.min(len - 1, Math.max(0, k)) * stride];
+                sa += p >>> 24;
+                sr += (p >> 16) & 255;
+                sg += (p >> 8) & 255;
+                sb += p & 255;
+            }
+            for (int i = 0; i < len; i++) {
+                out[base + i * stride] = ((int) (sa / div) << 24) | ((int) (sr / div) << 16)
+                        | ((int) (sg / div) << 8) | (int) (sb / div);
+                int add = in[base + Math.min(len - 1, i + r + 1) * stride];
+                int rem = in[base + Math.max(0, i - r) * stride];
+                sa += (add >>> 24) - (rem >>> 24);
+                sr += ((add >> 16) & 255) - ((rem >> 16) & 255);
+                sg += ((add >> 8) & 255) - ((rem >> 8) & 255);
+                sb += (add & 255) - (rem & 255);
             }
         }
     }
 
-    private static void pine(BufferedImage im, Random rnd, int cx, int baseY, int height, int halfW, int color) {
-        int trunk = Math.max(1, height / 6);
-        for (int y = 0; y < trunk; y++) {
-            px(im, cx, baseY - y, mix(color, 0x000000, 0.3));
+    /** Rozmycie gaussowskie (3x rozmycie pudełkowe) - daje miękki, "renderowany" wygląd zamiast pikseli. */
+    private static void blur(BufferedImage im, double radius) {
+        int r = (int) Math.round(radius);
+        if (r < 1) {
+            return;
         }
-        int tiers = Math.max(3, height / 4);
-        int crown = Math.max(1, height - trunk);
-        for (int y = 0; y < crown; y++) {
-            double f = y / (double) crown;
-            double tierPos = (f * tiers) % 1.0;
-            int wy = (int) Math.round(halfW * (1 - f) * (0.55 + 0.45 * (1 - tierPos)));
-            for (int dx = -wy; dx <= wy; dx++) {
-                int n = rnd.nextInt(5);
-                int c = n == 0 ? mix(color, 0xFFFFFF, 0.06) : n == 1 ? mix(color, 0x000000, 0.25) : color;
-                px(im, cx + dx, baseY - trunk - y, c);
-            }
+        int w = im.getWidth();
+        int h = im.getHeight();
+        int[] px = ((java.awt.image.DataBufferInt) im.getRaster().getDataBuffer()).getData();
+        int[] tmp = new int[px.length];
+        for (int i = 0; i < 3; i++) {
+            boxPass(px, tmp, w, h, r, true);
+            boxPass(tmp, px, w, h, r, false);
         }
     }
 
-    private static void bigPine(BufferedImage im, Random rnd, int cx, int baseY, int height, int halfW) {
-        int color = 0x060E0B;
-        int trunkW = Math.max(2, halfW / 6);
-        int trunk = height / 7;
-        for (int y = 0; y < trunk; y++) {
-            for (int dx = -trunkW / 2; dx <= trunkW / 2; dx++) {
-                px(im, cx + dx, baseY - y, rnd.nextInt(3) == 0 ? 0x120C08 : 0x0B0806);
-            }
+    private static void glow(Graphics2D g0, double cx, double cy, double rx, double ry, Color c, int a) {
+        Graphics2D g = (Graphics2D) g0.create();
+        g.translate(cx, cy);
+        g.scale(1, ry / rx);
+        g.setPaint(new RadialGradientPaint(0f, 0f, (float) rx, new float[]{0f, 0.4f, 1f},
+                new Color[]{alpha(c, a), alpha(c, a / 3), alpha(c, 0)}));
+        g.fill(new Ellipse2D.Double(-rx, -rx, rx * 2, rx * 2));
+        g.dispose();
+    }
+
+    private static double[] ridgeYs(int w, double base, double amp, double freq, int seed, double sharp,
+                                    java.util.function.DoubleUnaryOperator extra) {
+        int n = w / 3 + 12;
+        double[] ys = new double[n];
+        for (int i = 0; i < n; i++) {
+            double x = -6 + i * 3.0;
+            double u = x / w * freq;
+            double soft = 0.5 + 0.5 * fbm(u, seed, 5);
+            double ridged = 1.15 - 1.6 * Math.abs(fbm(u * 1.3 + 7, seed + 3, 4));
+            double v = (1 - sharp) * soft + sharp * Math.max(0, ridged);
+            ys[i] = base - amp * v - (extra == null ? 0 : extra.applyAsDouble(x / w));
         }
-        int tiers = Math.max(5, height / 9);
-        int crown = height - trunk;
-        for (int y = 0; y < crown; y++) {
-            double f = y / (double) crown;
-            double tierPos = (f * tiers) % 1.0;
-            double edge = (1 - f) * (0.45 + 0.55 * (1 - tierPos));
-            int wy = (int) Math.round(halfW * edge);
-            for (int dx = -wy; dx <= wy; dx++) {
-                int n = rnd.nextInt(6);
-                int c = n == 0 ? 0x0C1A14 : n == 1 ? 0x040A08 : color;
-                // jaśniejsza krawędź od strony latarni (prawa)
-                if (dx > wy - 2 && n < 3) {
-                    c = 0x12281F;
-                }
-                px(im, cx + dx, baseY - trunk - y, c);
-            }
+        return ys;
+    }
+
+    private static Path2D areaPath(double[] ys, int h) {
+        Path2D p = new Path2D.Double();
+        p.moveTo(-6, h + 6);
+        for (int i = 0; i < ys.length; i++) {
+            p.lineTo(-6 + i * 3.0, ys[i]);
+        }
+        p.lineTo(-6 + (ys.length - 1) * 3.0, h + 6);
+        p.closePath();
+        return p;
+    }
+
+    private static Path2D linePath(double[] ys) {
+        Path2D p = new Path2D.Double();
+        p.moveTo(-6, ys[0]);
+        for (int i = 1; i < ys.length; i++) {
+            p.lineTo(-6 + i * 3.0, ys[i]);
+        }
+        return p;
+    }
+
+    private static double minOf(double[] a) {
+        double m = a[0];
+        for (double v : a) {
+            m = Math.min(m, v);
+        }
+        return m;
+    }
+
+    private static void pineTree(Graphics2D g, Random r, double cx, double baseY, double height, double halfW) {
+        double trunkH = height * 0.10;
+        double trunkW = Math.max(1.5, halfW * 0.16);
+        g.fill(new java.awt.geom.Rectangle2D.Double(cx - trunkW / 2, baseY - trunkH, trunkW, trunkH + 1));
+        int tiers = Math.max(4, (int) (height / Math.max(8, halfW * 0.9)));
+        double crown = height - trunkH;
+        double step = crown / (tiers + 0.8);
+        for (int i = 0; i < tiers; i++) {
+            double yb = baseY - trunkH - i * step * 0.92;
+            double yt = yb - step * 1.9;
+            double hw = halfW * (1 - i / (double) (tiers + 0.5)) * (0.86 + 0.14 * r.nextDouble());
+            double j = step * 0.10;
+            Path2D p = new Path2D.Double();
+            p.moveTo(cx + (r.nextDouble() - 0.5) * j, yt);
+            p.lineTo(cx + hw * 0.62, yb - step * (0.62 + (r.nextDouble() - 0.5) * 0.12));
+            p.lineTo(cx + hw * 0.50, yb - step * 0.55);
+            p.lineTo(cx + hw, yb + (r.nextDouble() - 0.5) * j);
+            p.lineTo(cx + hw * 0.1, yb - step * 0.22);
+            p.lineTo(cx - hw * 0.1, yb - step * 0.22);
+            p.lineTo(cx - hw, yb + (r.nextDouble() - 0.5) * j);
+            p.lineTo(cx - hw * 0.50, yb - step * 0.55);
+            p.lineTo(cx - hw * 0.62, yb - step * (0.62 + (r.nextDouble() - 0.5) * 0.12));
+            p.closePath();
+            g.fill(p);
         }
     }
 
-    private static void house(BufferedImage im, Random rnd, int x0, int groundY, int w, int h, int lw, int lh) {
-        int wallTop = groundY - h;
-        int baseH = Math.max(3, h / 4);
-        for (int y = wallTop; y <= groundY; y++) {
-            for (int x = x0; x < x0 + w; x++) {
-                boolean base = y > groundY - baseH;
-                int n = rnd.nextInt(4);
-                int c = base ? (n == 0 ? 0x2E3438 : n == 1 ? 0x22282C : 0x292F33)
-                        : (n == 0 ? 0x3B2A1C : n == 1 ? 0x2D2015 : 0x35261A);
-                if (!base && (y - wallTop) % 3 == 0) {
-                    c = mix(c, 0x000000, 0.32);
+    private static BufferedImage smoothScene(int w, int h) {
+        double k = h / 470.0;
+        double horizon = h * 0.52;
+        BufferedImage out = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = out.createGraphics();
+        aa(g);
+
+        // niebo + poświata za głównym szczytem
+        g.setPaint(new GradientPaint(0, 0, new Color(0x02040A), 0, (float) horizon, new Color(0x263A3C)));
+        g.fillRect(0, 0, w, h);
+        glow(g, w * 0.60, horizon * 0.95, w * 0.36, h * 0.22, new Color(0x5F8580), 62);
+        Random sr = new Random(11);
+        for (int i = 0; i < 120; i++) {
+            double sx = sr.nextDouble() * w;
+            double sy = Math.pow(sr.nextDouble(), 1.4) * horizon * 0.85;
+            double sz = (0.7 + sr.nextDouble() * 1.3) * k;
+            int a = (int) (60 + 150 * (1 - sy / horizon) * sr.nextDouble());
+            g.setColor(alpha(new Color(0xE6F4EE), clamp255(a)));
+            g.fill(new Ellipse2D.Double(sx, sy, sz, sz));
+        }
+
+        // dalekie góry (z wyraźnym szczytem pośrodku)
+        {
+            BufferedImage L = newLayer(w, h);
+            Graphics2D lg = layerGfx(L);
+            double[] ys = ridgeYs(w, horizon + 10 * k, h * 0.17, 3.6, 21, 0.6,
+                    x -> h * (0.17 * Math.exp(-Math.pow((x - 0.60) / 0.075, 2))
+                    + 0.14 * Math.exp(-Math.pow((x - 0.90) / 0.06, 2)))
+                    * (0.8 + 0.4 * Math.abs(vnoise(x * 45, 9))));
+            lg.setPaint(new GradientPaint(0, (float) minOf(ys), new Color(0x44585F), 0, (float) (horizon + 20 * k), new Color(0x16262A)));
+            lg.fill(areaPath(ys, h));
+            lg.setStroke(new BasicStroke((float) (1.6 * k), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            lg.setColor(alpha(new Color(0x9DB6BD), 52));
+            lg.draw(linePath(ys));
+            lg.dispose();
+            blur(L, 1.7 * k);
+            g.drawImage(L, 0, 0, null);
+        }
+        g.setPaint(new GradientPaint(0, (float) (horizon - 0.13 * h), alpha(new Color(0x3E5B5C), 0),
+                0, (float) (horizon + 0.02 * h), alpha(new Color(0x34504F), 118)));
+        g.fillRect(0, (int) (horizon - 0.13 * h), w, (int) (0.16 * h));
+
+        // bliższe góry
+        {
+            BufferedImage L = newLayer(w, h);
+            Graphics2D lg = layerGfx(L);
+            double[] ys = ridgeYs(w, horizon + 0.045 * h, 0.17 * h, 4.6, 77, 0.35, null);
+            lg.setPaint(new GradientPaint(0, (float) minOf(ys), new Color(0x1E3236), 0, (float) (horizon + 0.07 * h), new Color(0x0B171A)));
+            lg.fill(areaPath(ys, h));
+            lg.setStroke(new BasicStroke((float) (1.3 * k)));
+            lg.setColor(alpha(new Color(0x86A9AF), 46));
+            lg.draw(linePath(ys));
+            lg.dispose();
+            blur(L, 1.5 * k);
+            g.drawImage(L, 0, 0, null);
+        }
+        g.setPaint(new GradientPaint(0, (float) (horizon - 0.02 * h), alpha(new Color(0x35504F), 0),
+                0, (float) (horizon + 0.05 * h), alpha(new Color(0x2E4745), 105)));
+        g.fillRect(0, (int) (horizon - 0.02 * h), w, (int) (0.08 * h));
+
+        // linia lasu w oddali
+        Random rnd = new Random(5);
+        {
+            BufferedImage L = newLayer(w, h);
+            Graphics2D lg = layerGfx(L);
+            double[] hill = ridgeYs(w, 0.612 * h, 0.03 * h, 5, 31, 0.0, null);
+            lg.setPaint(new GradientPaint(0, (float) (0.57 * h), new Color(0x0F1E19), 0, h, new Color(0x070E0C)));
+            lg.fill(areaPath(hill, h));
+            lg.setColor(new Color(0x0B1814));
+            for (double x = -10; x < w + 10; x += 6.5 * k) {
+                int idx = Math.max(0, Math.min(hill.length - 1, (int) ((x + 6) / 3)));
+                double th = (0.035 + 0.06 * rnd.nextDouble()) * h;
+                pineTree(lg, rnd, x, hill[idx] + 4 * k, th, th * 0.26);
+            }
+            lg.dispose();
+            blur(L, 1.5 * k);
+            g.drawImage(L, 0, 0, null);
+        }
+
+        // średni plan: sosny
+        {
+            BufferedImage L = newLayer(w, h);
+            Graphics2D lg = layerGfx(L);
+            lg.setColor(new Color(0x07110D));
+            double[] xs = {0.03, 0.115, 0.205, 0.255, 0.345, 0.395, 0.43, 0.47, 0.51, 0.545, 0.58, 0.62, 0.655, 0.69, 0.725};
+            double[] hs = {0.26, 0.19, 0.22, 0.13, 0.20, 0.27, 0.17, 0.21, 0.15, 0.19, 0.13, 0.17, 0.12, 0.15, 0.11};
+            for (int i = 0; i < xs.length; i++) {
+                double th = hs[i] * h;
+                pineTree(lg, rnd, xs[i] * w, (0.675 + 0.02 * rnd.nextDouble()) * h, th, th * 0.24);
+            }
+            lg.dispose();
+            blur(L, 2.4 * k);
+            g.drawImage(L, 0, 0, null);
+        }
+
+        // pierwszy plan: ziemia, trawa, zielone światło
+        {
+            BufferedImage L = newLayer(w, h);
+            Graphics2D lg = layerGfx(L);
+            double[] gy = ridgeYs(w, 0.72 * h, 0.02 * h, 7, 55, 0.0, null);
+            lg.setPaint(new GradientPaint(0, (float) (0.69 * h), new Color(0x12231B), 0, h, new Color(0x030706)));
+            lg.fill(areaPath(gy, h));
+            glow(lg, w * 0.06, 0.82 * h, w * 0.13, h * 0.07, new Color(0x19E68C), 55);
+            glow(lg, w * 0.30, 0.79 * h, w * 0.10, h * 0.05, new Color(0x19E68C), 34);
+            glow(lg, w * 0.50, 0.77 * h, w * 0.12, h * 0.04, new Color(0x19E68C), 22);
+            glow(lg, w * 0.84, 0.86 * h, w * 0.22, h * 0.10, new Color(0x19E68C), 70);
+            for (double x = -4; x < w + 4; x += 4.5 * k) {
+                if (rnd.nextDouble() < 0.25) {
+                    continue;
                 }
-                if (x == x0 || x == x0 + 1) {
-                    c = mix(c, 0x000000, 0.35);
-                }
-                px(im, x, y, c);
+                int idx = Math.max(0, Math.min(gy.length - 1, (int) ((x + 6) / 3)));
+                double bh = (3 + rnd.nextDouble() * 9) * k;
+                boolean lit = rnd.nextDouble() < (x > w * 0.6 ? 0.34 : 0.16);
+                lg.setColor(lit ? alpha(new Color(0x2C6B47), 200) : new Color(0x0F2018));
+                Path2D bl = new Path2D.Double();
+                bl.moveTo(x - 1.6 * k, gy[idx] + 2 * k);
+                bl.lineTo(x + (rnd.nextDouble() - 0.5) * 3 * k, gy[idx] - bh);
+                bl.lineTo(x + 1.6 * k, gy[idx] + 2 * k);
+                bl.closePath();
+                lg.fill(bl);
+            }
+            lg.dispose();
+            blur(L, 0.9 * k);
+            g.drawImage(L, 0, 0, null);
+        }
+
+        // duże sosny z lewej (nieco nieostre)
+        {
+            BufferedImage L = newLayer(w, h);
+            Graphics2D lg = layerGfx(L);
+            lg.setColor(new Color(0x040907));
+            pineTree(lg, rnd, 0.03 * w, 0.82 * h, 0.95 * h, 0.085 * w);
+            pineTree(lg, rnd, 0.285 * w, 0.76 * h, 0.40 * h, 0.040 * w);
+            lg.dispose();
+            blur(L, 1.8 * k);
+            g.drawImage(L, 0, 0, null);
+        }
+
+        // dom z latarnią
+        {
+            BufferedImage L = newLayer(w, h);
+            Graphics2D lg = layerGfx(L);
+            double x0 = 0.772 * w;
+            double ground = 0.735 * h;
+            double wallTop = 0.535 * h;
+            double logH = 0.026 * h;
+            for (double y = wallTop; y < ground; y += logH) {
+                boolean stone = y > ground - 0.05 * h;
+                int c1 = stone ? 0x333B40 : mix(0x43301F, 0x2C1F14, rnd.nextDouble());
+                int c2 = mix(c1, 0x000000, 0.35);
+                lg.setPaint(new GradientPaint(0, (float) y, new Color(c1), 0, (float) (y + logH), new Color(c2)));
+                lg.fill(new RoundRectangle2D.Double(x0, y, w - x0 + 12, logH - 0.6 * k, 3 * k, 3 * k));
+            }
+            lg.setPaint(new GradientPaint((float) x0, 0, alpha(Color.BLACK, 170), (float) (x0 + 0.018 * w), 0, alpha(Color.BLACK, 0)));
+            lg.fill(new java.awt.geom.Rectangle2D.Double(x0, wallTop, 0.018 * w, ground - wallTop));
+            lg.setPaint(new GradientPaint(0, (float) wallTop, alpha(Color.BLACK, 170), 0, (float) (wallTop + 0.05 * h), alpha(Color.BLACK, 0)));
+            lg.fill(new java.awt.geom.Rectangle2D.Double(x0, wallTop, w - x0 + 12, 0.05 * h));
+            // dach
+            Path2D roof = new Path2D.Double();
+            roof.moveTo(x0 - 0.032 * w, wallTop + 0.012 * h);
+            roof.lineTo(x0 + 0.05 * w, 0.445 * h);
+            roof.lineTo(w + 16, 0.395 * h);
+            roof.lineTo(w + 16, wallTop - 0.006 * h);
+            roof.closePath();
+            lg.setPaint(new GradientPaint(0, (float) (0.40 * h), new Color(0x1C1612), 0, (float) wallTop, new Color(0x0E0A08)));
+            lg.fill(roof);
+            lg.setStroke(new BasicStroke((float) (1.6 * k), BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            lg.setColor(alpha(new Color(0x7E948E), 90));
+            lg.draw(new java.awt.geom.Line2D.Double(x0 - 0.032 * w, wallTop + 0.012 * h, x0 + 0.05 * w, 0.445 * h));
+            lg.draw(new java.awt.geom.Line2D.Double(x0 + 0.05 * w, 0.445 * h, w + 16, 0.395 * h));
+            // okno
+            double wx = x0 + 0.115 * w;
+            double wy = 0.595 * h;
+            double ww = 0.042 * w;
+            double wh = 0.09 * h;
+            lg.setColor(new Color(0x4A3626));
+            lg.fill(new RoundRectangle2D.Double(wx - 3 * k, wy - 3 * k, ww + 6 * k, wh + 6 * k, 3 * k, 3 * k));
+            lg.setPaint(new GradientPaint(0, (float) wy, new Color(0x0B1F19), 0, (float) (wy + wh), new Color(0x040B09)));
+            lg.fill(new java.awt.geom.Rectangle2D.Double(wx, wy, ww, wh));
+            lg.setColor(new Color(0x4A3626));
+            lg.fill(new java.awt.geom.Rectangle2D.Double(wx + ww / 2 - k, wy, 2 * k, wh));
+            // latarnia
+            double lx = LANTERN_X * w;
+            double ly = LANTERN_Y * h;
+            lg.setColor(new Color(0x1A1410));
+            lg.fill(new java.awt.geom.Rectangle2D.Double(lx - 1 * k, ly - 0.05 * h, 2 * k, 0.04 * h));
+            lg.fill(new RoundRectangle2D.Double(lx - 5 * k, ly - 9 * k, 10 * k, 18 * k, 3 * k, 3 * k));
+            lg.setColor(new Color(0x5CF2A6));
+            lg.fill(new RoundRectangle2D.Double(lx - 3.4 * k, ly - 6.6 * k, 6.8 * k, 13.2 * k, 2 * k, 2 * k));
+            lg.setColor(new Color(0xE6FFF1));
+            lg.fill(new RoundRectangle2D.Double(lx - 1.6 * k, ly - 3.6 * k, 3.2 * k, 7.2 * k, 1.5 * k, 1.5 * k));
+            lg.dispose();
+            blur(L, 1.0 * k);
+            g.drawImage(L, 0, 0, null);
+            // zielone światło latarni na ścianie i ziemi
+            glow(g, lx, ly, w * 0.10, h * 0.20, new Color(0x19E68C), 95);
+            glow(g, lx, 0.74 * h, w * 0.12, h * 0.05, new Color(0x19E68C), 60);
+        }
+        g.dispose();
+
+        // winieta i delikatne ziarno (usuwa "pasy" w gradientach)
+        int[] px = ((java.awt.image.DataBufferInt) out.getRaster().getDataBuffer()).getData();
+        Random nr = new Random(99);
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                double dx = (x - w / 2.0) / (w * 0.62);
+                double dy = (y - h * 0.55) / (h * 0.75);
+                double v = 1 - 0.50 * Math.min(1, Math.pow(dx * dx + dy * dy, 1.1));
+                double nz = (nr.nextDouble() - 0.5) * 6;
+                int p = px[y * w + x];
+                int r = clamp255((int) (((p >> 16) & 255) * v + nz));
+                int gg = clamp255((int) (((p >> 8) & 255) * v + nz));
+                int b = clamp255((int) ((p & 255) * v + nz));
+                px[y * w + x] = (r << 16) | (gg << 8) | b;
             }
         }
-        // dach
-        int roofH = Math.max(4, h / 3);
-        for (int r = 0; r < roofH; r++) {
-            int inset = (int) (r * 1.15);
-            for (int x = x0 - 3 + inset; x < x0 + w + 3 - inset; x++) {
-                int n = rnd.nextInt(4);
-                int c = mix(n == 0 ? 0x1F1814 : 0x17110E, 0x0A0705, r / (double) roofH * 0.6);
-                if (r == 0) {
-                    c = mix(c, 0x4A3A2E, 0.35);
-                }
-                px(im, x, wallTop - 1 - r, c);
-            }
-        }
-        // okno
-        int wx = x0 + (int) (w * 0.58);
-        int wy = wallTop + (int) (h * 0.22);
-        int ww = Math.max(4, (int) (w * 0.14));
-        int wh = Math.max(5, (int) (h * 0.30));
-        for (int y = wy - 1; y <= wy + wh; y++) {
-            for (int x = wx - 1; x <= wx + ww; x++) {
-                boolean frame = y == wy - 1 || y == wy + wh || x == wx - 1 || x == wx + ww;
-                px(im, x, y, frame ? 0x4A3626 : 0x0A1311);
-            }
-        }
-        // latarnia
-        int lx = (int) (LANTERN_X * lw);
-        int ly = (int) (LANTERN_Y * lh);
-        px(im, lx, ly - 4, 0x1A1410);
-        px(im, lx, ly - 3, 0x1A1410);
-        for (int dy = -2; dy <= 2; dy++) {
-            for (int dx = -1; dx <= 1; dx++) {
-                px(im, lx + dx, ly + dy, dy == 0 ? 0xE6FFF1 : 0x5CF2A6);
-            }
-        }
+        return out;
     }
 
-    /** Miniatury kart wiadomości: 0 = zielone kryształy w skale, 1 = wioska nocą. */
+    /** Miniatury kart wiadomości (gładkie): 0 = zielone kryształy w skale, 1 = wioska nocą. */
     private static BufferedImage thumb(int kind, int w, int h) {
         BufferedImage im = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
+        Graphics2D g = im.createGraphics();
+        aa(g);
         Random rnd = new Random(kind * 77L + 5);
         if (kind == 0) {
-            for (int y = 0; y < h; y++) {
-                for (int x = 0; x < w; x++) {
-                    int c = mix(0x0B1512, 0x1B2B26, rnd.nextDouble() * 0.7);
-                    if ((x / 5 + y / 5) % 2 == 0) {
-                        c = mix(c, 0x000000, 0.18);
-                    }
-                    im.setRGB(x, y, c);
-                }
+            g.setPaint(new GradientPaint(0, 0, new Color(0x0A1411), 0, h, new Color(0x1B2B25)));
+            g.fillRect(0, 0, w, h);
+            for (int i = 0; i < 46; i++) {
+                double cx = rnd.nextDouble() * w;
+                double cy = rnd.nextDouble() * h;
+                double s = (10 + rnd.nextDouble() * 26) * h / 128.0;
+                Path2D t = new Path2D.Double();
+                t.moveTo(cx, cy - s);
+                t.lineTo(cx + s * (0.6 + rnd.nextDouble() * 0.6), cy + s * 0.5);
+                t.lineTo(cx - s * (0.6 + rnd.nextDouble() * 0.6), cy + s * 0.6);
+                t.closePath();
+                g.setColor(alpha(rnd.nextBoolean() ? Color.BLACK : new Color(0x4A6A60), 34));
+                g.fill(t);
             }
-            double[][] cs = {{0.30, 0.62, 9}, {0.58, 0.78, 7}, {0.72, 0.50, 11}, {0.14, 0.80, 6}, {0.46, 0.38, 6}};
+            double[][] cs = {{0.30, 0.66, 0.40, -0.1}, {0.58, 0.82, 0.32, 0.18}, {0.72, 0.56, 0.46, 0.12},
+                    {0.14, 0.86, 0.28, -0.22}, {0.46, 0.46, 0.30, 0.05}, {0.84, 0.88, 0.26, -0.15}};
             for (double[] c : cs) {
-                int cx = (int) (c[0] * w);
-                int cy = (int) (c[1] * h);
-                int len = (int) c[2];
-                for (int y = 0; y < h; y++) {
-                    for (int x = 0; x < w; x++) {
-                        double d = Math.hypot(x - cx, y - cy) / (len * 1.8);
-                        if (d < 1) {
-                            im.setRGB(x, y, mix(im.getRGB(x, y) & 0xFFFFFF, 0x19E68C, Math.pow(1 - d, 2) * 0.55));
-                        }
-                    }
-                }
+                double cx = c[0] * w;
+                double cy = c[1] * h;
+                double len = c[2] * h;
+                glow(g, cx, cy - len * 0.5, len * 1.7, len * 1.7, new Color(0x19E68C), 120);
                 for (int i = -1; i <= 1; i++) {
-                    int l = len - Math.abs(i) * 3;
-                    for (int k = 0; k < l; k++) {
-                        int half = Math.max(0, (int) ((1 - k / (double) l) * 1.6));
-                        for (int dx = -half; dx <= half; dx++) {
-                            px(im, cx + i * 3 + dx, cy - k + Math.abs(i) * 2, k > l / 2 ? 0xB8FFDD : (dx < 0 ? 0x3DF0A0 : 0x17B872));
-                        }
-                    }
+                    Graphics2D gc = (Graphics2D) g.create();
+                    double l2 = len * (1 - Math.abs(i) * 0.28);
+                    double bw = len * 0.12;
+                    gc.translate(cx + i * len * 0.2, cy + Math.abs(i) * len * 0.08);
+                    gc.rotate(c[3] + i * 0.22);
+                    Path2D left = new Path2D.Double();
+                    left.moveTo(-bw, 0);
+                    left.lineTo(-bw, -l2 * 0.72);
+                    left.lineTo(0, -l2);
+                    left.lineTo(0, 0);
+                    left.closePath();
+                    Path2D right = new Path2D.Double();
+                    right.moveTo(0, 0);
+                    right.lineTo(0, -l2);
+                    right.lineTo(bw, -l2 * 0.72);
+                    right.lineTo(bw, 0);
+                    right.closePath();
+                    gc.setPaint(new GradientPaint(0, (float) -l2, new Color(0xC9FFE4), 0, 0, new Color(0x2EE59A)));
+                    gc.fill(left);
+                    gc.setPaint(new GradientPaint(0, (float) -l2, new Color(0x5BE8A8), 0, 0, new Color(0x0F8F5A)));
+                    gc.fill(right);
+                    gc.dispose();
                 }
             }
         } else {
-            for (int y = 0; y < h; y++) {
-                for (int x = 0; x < w; x++) {
-                    im.setRGB(x, y, mix(0x0E1D24, 0x213A40, y / (double) h * 0.8 + rnd.nextDouble() * 0.12));
-                }
+            g.setPaint(new GradientPaint(0, 0, new Color(0x0C1A21), 0, h, new Color(0x264348)));
+            g.fillRect(0, 0, w, h);
+            glow(g, w * 0.5, h * 0.62, w * 0.55, h * 0.35, new Color(0xFFB35A), 40);
+            g.setColor(new Color(0x0A1411));
+            for (int i = 0; i < 14; i++) {
+                double tx = rnd.nextDouble() * w;
+                double th = (0.16 + 0.22 * rnd.nextDouble()) * h;
+                pineTree(g, rnd, tx, h * 0.97, th, th * 0.26);
             }
-            for (int i = 0; i < 11; i++) {
-                int bx = 2 + rnd.nextInt(w - 8);
-                int by = 6 + rnd.nextInt(h - 12);
-                int bw = 4 + rnd.nextInt(4);
-                int bhh = 3 + rnd.nextInt(3);
-                for (int y = by; y < by + bhh; y++) {
-                    for (int x = bx; x < bx + bw; x++) {
-                        px(im, x, y, rnd.nextInt(3) == 0 ? 0x6A4A31 : 0x4D3524);
-                    }
-                }
-                for (int x = bx - 1; x <= bx + bw; x++) {
-                    px(im, x, by - 1, 0x1D1410);
-                }
-                px(im, bx + 1, by + 1, 0xFFB35A);
-                if (bw > 5) {
-                    px(im, bx + bw - 2, by + 1, 0xFFC878);
-                }
+            for (int i = 0; i < 9; i++) {
+                double bw = (0.13 + 0.07 * rnd.nextDouble()) * w;
+                double bh = (0.14 + 0.07 * rnd.nextDouble()) * h;
+                double bx = 0.04 * w + rnd.nextDouble() * (w - bw - 0.08 * w);
+                double by = h * (0.50 + 0.38 * rnd.nextDouble());
+                g.setPaint(new GradientPaint(0, (float) by, new Color(0x5A3F2B), 0, (float) (by + bh), new Color(0x2E2016)));
+                g.fill(new java.awt.geom.Rectangle2D.Double(bx, by, bw, bh));
+                Path2D roof = new Path2D.Double();
+                roof.moveTo(bx - bw * 0.1, by);
+                roof.lineTo(bx + bw / 2, by - bh * 0.55);
+                roof.lineTo(bx + bw * 1.1, by);
+                roof.closePath();
+                g.setColor(new Color(0x1B130E));
+                g.fill(roof);
+                glow(g, bx + bw * 0.3, by + bh * 0.4, bw * 0.55, bw * 0.55, new Color(0xFFB35A), 150);
+                g.setColor(new Color(0xFFD08A));
+                g.fill(new java.awt.geom.Rectangle2D.Double(bx + bw * 0.22, by + bh * 0.3, bw * 0.16, bh * 0.22));
             }
-            for (int i = 0; i < 6; i++) {
-                int x = rnd.nextInt(w);
-                int y = rnd.nextInt(h);
-                px(im, x, y, 0xFFB35A);
+            for (int i = 0; i < 26; i++) {
+                glow(g, rnd.nextDouble() * w, rnd.nextDouble() * h, 5, 5, new Color(0xFFB35A), 90);
             }
         }
-        return im;
+        g.dispose();
+        BufferedImage soft = newLayer(w, h);
+        Graphics2D sg = soft.createGraphics();
+        sg.drawImage(im, 0, 0, null);
+        sg.dispose();
+        blur(soft, Math.max(1, h / 110.0));
+        BufferedImage res = new BufferedImage(w, h, BufferedImage.TYPE_INT_RGB);
+        Graphics2D rg = res.createGraphics();
+        rg.drawImage(soft, 0, 0, null);
+        rg.dispose();
+        return res;
     }
 
     // ------------------------------------------------------------------ skin
@@ -1704,22 +1961,95 @@ public class BushLaunch {
         }
     }
 
+    /** Statusy znajomych: nick -> {stan: game|online|offline, opis}. Launcher nie ma serwera obecności, więc domyślnie "offline". */
+    private final Map<String, String[]> presence = new java.util.concurrent.ConcurrentHashMap<>();
+
+    private String[] presenceOf(String nick) {
+        String[] p = presence.get(nick);
+        return p != null ? p : new String[]{"offline", "Offline"};
+    }
+
     private void openFriendsDialog() {
-        JPanel body = new JPanel(new BorderLayout(0, 12));
-        JDialog d = makeDialog("Znajomi", body, 440, 440);
-        JTextField nickField = field("");
-        JLabel err = new JLabel(" ");
-        err.setForeground(new Color(0xFF6B5A));
-        err.setFont(body(Font.PLAIN, 12));
-        FlatButton add = new FlatButton("Dodaj", true);
-        JPanel addRow = new JPanel(new BorderLayout(10, 0));
-        addRow.setOpaque(false);
-        addRow.add(nickField, BorderLayout.CENTER);
-        addRow.add(add, BorderLayout.EAST);
-        JPanel head = new JPanel(new BorderLayout(0, 4));
-        head.setOpaque(false);
-        head.add(addRow, BorderLayout.NORTH);
-        head.add(err, BorderLayout.SOUTH);
+        JDialog d = new JDialog(frame, false);
+        d.setUndecorated(true);
+        Runnable[] resize = new Runnable[1];
+        JPanel root = buildFriendsPanel(d::dispose, () -> resize[0].run());
+        d.setContentPane(root);
+        resize[0] = () -> {
+            d.pack();
+            Point fp = frame.getLocationOnScreen();
+            d.setLocation(fp.x + frame.getWidth() - d.getWidth() - 34, fp.y + 126);
+        };
+        resize[0].run();
+        d.addWindowListener(new java.awt.event.WindowAdapter() {
+            @Override
+            public void windowDeactivated(java.awt.event.WindowEvent e) {
+                d.dispose();
+            }
+        });
+        d.setVisible(true);
+    }
+
+    private JPanel buildFriendsPanel(Runnable close, Runnable resize) {
+        final int W = 306;
+        JPanel root = new JPanel(new BorderLayout());
+        root.setBackground(new Color(0x0D1318));
+        root.setBorder(BorderFactory.createLineBorder(new Color(0x1E2A34)));
+
+        // nagłówek: Znajomi · 3/4 online  [x]
+        JComponent head = new Clickable(null) {
+            private boolean hoverX;
+
+            {
+                setPreferredSize(new Dimension(W, 52));
+                addMouseMotionListener(new MouseAdapter() {
+                    @Override
+                    public void mouseMoved(MouseEvent e) {
+                        boolean h = e.getX() > getWidth() - 46;
+                        if (h != hoverX) {
+                            hoverX = h;
+                            repaint();
+                        }
+                    }
+                });
+                addMouseListener(new MouseAdapter() {
+                    @Override
+                    public void mouseReleased(MouseEvent e) {
+                        if (e.getX() > getWidth() - 46) {
+                            close.run();
+                        }
+                    }
+                });
+            }
+
+            @Override
+            protected void paintComponent(Graphics g0) {
+                Graphics2D g = (Graphics2D) g0.create();
+                aa(g);
+                List<String> fs = friends();
+                int on = 0;
+                for (String f : fs) {
+                    if (!"offline".equals(presenceOf(f)[0])) {
+                        on++;
+                    }
+                }
+                int cy = getHeight() / 2;
+                g.setFont(head(Font.BOLD, 19));
+                g.setColor(TEXT);
+                g.drawString("Znajomi", 16, mid(g, cy));
+                int x = 16 + g.getFontMetrics().stringWidth("Znajomi") + 10;
+                g.setFont(body(Font.PLAIN, 14));
+                g.setColor(MUTED);
+                g.drawString("\u00b7  " + on + "/" + fs.size() + " online", x, mid(g, cy));
+                g.setColor(hoverX ? TEXT : MUTED);
+                g.setStroke(new BasicStroke(1.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                int cx = getWidth() - 24;
+                g.drawLine(cx - 5, cy - 5, cx + 5, cy + 5);
+                g.drawLine(cx - 5, cy + 5, cx + 5, cy - 5);
+                g.dispose();
+            }
+        };
+        root.add(head, BorderLayout.NORTH);
 
         JPanel list = new JPanel();
         list.setOpaque(false);
@@ -1728,55 +2058,104 @@ public class BushLaunch {
         wrap.setOpaque(false);
         wrap.add(list, BorderLayout.NORTH);
         JScrollPane scroll = darkScroll(wrap);
+        scroll.setBorder(new EmptyBorder(0, 0, 0, 0));
         scroll.getViewport().setOpaque(false);
+        scroll.getViewport().setBackground(new Color(0x0D1318));
+        scroll.getVerticalScrollBar().setBackground(new Color(0x0D1318));
+
+        // dolny przycisk "Dodaj znajomego" z przerywaną ramką, po kliknięciu pole na nick
+        CardLayout bottomCards = new CardLayout();
+        JPanel bottom = new JPanel(bottomCards);
+        bottom.setOpaque(false);
+        bottom.setPreferredSize(new Dimension(W, 76));
+
+        Clickable addBtn = new Clickable(null) {
+            @Override
+            protected void paintComponent(Graphics g0) {
+                Graphics2D g = (Graphics2D) g0.create();
+                aa(g);
+                int w = getWidth() - 28;
+                int h = getHeight() - 24;
+                g.translate(14, 6);
+                g.setColor(hover ? alpha(ACCENT, 20) : alpha(Color.WHITE, 5));
+                g.fill(new RoundRectangle2D.Double(0, 0, w, h, 14, 14));
+                g.setColor(hover ? alpha(ACCENT, 170) : new Color(0x2A3844));
+                g.setStroke(new BasicStroke(1.2f, BasicStroke.CAP_BUTT, BasicStroke.JOIN_MITER, 10f, new float[]{5f, 4f}, 0f));
+                g.draw(new RoundRectangle2D.Double(0.6, 0.6, w - 1.2, h - 1.2, 14, 14));
+                g.setFont(body(Font.PLAIN, 15));
+                String t = "Dodaj znajomego";
+                int tw = g.getFontMetrics().stringWidth(t);
+                int total = 26 + 12 + tw;
+                int sx = (w - total) / 2;
+                int cy = h / 2;
+                Color c = hover ? TEXT : new Color(0xB4BFC8);
+                g.setColor(c);
+                g.setStroke(new BasicStroke(1.6f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                g.draw(new Ellipse2D.Double(sx + 4, cy - 8, 8, 8));
+                g.draw(new Arc2D.Double(sx - 1, cy + 2, 18, 14, 0, 180, Arc2D.OPEN));
+                g.drawLine(sx + 21, cy - 4, sx + 21, cy + 4);
+                g.drawLine(sx + 17, cy, sx + 25, cy);
+                g.drawString(t, sx + 38, mid(g, cy));
+                g.dispose();
+            }
+        };
+        addBtn.setPreferredSize(new Dimension(W, 76));
+
+        JPanel form = new JPanel(new BorderLayout(0, 4));
+        form.setOpaque(false);
+        form.setBorder(new EmptyBorder(8, 14, 8, 14));
+        JTextField nickField = field("");
+        FlatButton add = new FlatButton("Dodaj", true);
+        add.setBorder(new EmptyBorder(9, 16, 9, 16));
+        JLabel err = new JLabel(" ");
+        err.setForeground(new Color(0xFF6B5A));
+        err.setFont(body(Font.PLAIN, 12));
+        JPanel row = new JPanel(new BorderLayout(8, 0));
+        row.setOpaque(false);
+        row.add(nickField, BorderLayout.CENTER);
+        row.add(add, BorderLayout.EAST);
+        form.add(row, BorderLayout.NORTH);
+        form.add(err, BorderLayout.SOUTH);
+
+        bottom.add(addBtn, "btn");
+        bottom.add(form, "form");
+        addBtn.onClick = () -> {
+            bottomCards.show(bottom, "form");
+            nickField.requestFocusInWindow();
+        };
 
         Runnable[] refresh = new Runnable[1];
         refresh[0] = () -> {
             list.removeAll();
             List<String> fs = friends();
+            int extra = validNick(nick) ? 1 : 0;
+            if (extra == 1) {
+                list.add(new SelfRow());
+            }
             for (String f : fs) {
-                JPanel row = new JPanel(new BorderLayout(10, 0)) {
-                    @Override
-                    protected void paintComponent(Graphics g0) {
-                        Graphics2D g = (Graphics2D) g0.create();
-                        aa(g);
-                        card(g, 0, 0, getWidth(), getHeight(), 10, false);
-                        Graphics2D gh = (Graphics2D) g.create();
-                        gh.clip(new RoundRectangle2D.Double(10, 8, 30, 30, 8, 8));
-                        BufferedImage sk = friendSkins.get(f);
-                        drawHead(gh, sk == NO_SKIN ? null : sk, 10, 8, 30);
-                        gh.dispose();
-                        g.dispose();
-                    }
-                };
-                row.setOpaque(false);
-                row.setBorder(new EmptyBorder(0, 52, 0, 8));
-                row.setPreferredSize(new Dimension(10, 46));
-                row.setMaximumSize(new Dimension(Integer.MAX_VALUE, 46));
-                JLabel l = new JLabel(f);
-                l.setForeground(TEXT);
-                l.setFont(body(Font.BOLD, 15));
-                FlatButton rm = new FlatButton("Usuń", false);
-                rm.setBorder(new EmptyBorder(6, 14, 6, 14));
-                rm.addActionListener(e -> {
+                list.add(new FriendRow(f, () -> {
                     List<String> cur = friends();
                     cur.remove(f);
                     saveFriends(cur);
                     refresh[0].run();
-                });
-                row.add(l, BorderLayout.CENTER);
-                row.add(rm, BorderLayout.EAST);
-                list.add(row);
-                list.add(javax.swing.Box.createVerticalStrut(6));
+                }, () -> {
+                    close.run();
+                    onPlay();
+                }));
             }
             if (fs.isEmpty()) {
-                JLabel none = new JLabel("Nie masz jeszcze znajomych. Wpisz nick gracza i kliknij Dodaj.");
+                JLabel none = new JLabel("  Nie masz jeszcze znajomych.");
                 none.setForeground(MUTED);
                 none.setFont(body(Font.PLAIN, 13));
+                none.setBorder(new EmptyBorder(14, 14, 14, 14));
                 list.add(none);
             }
+            int rows = Math.max(1, Math.min(6, fs.size() + extra));
+            scroll.setPreferredSize(new Dimension(W, fs.isEmpty() ? 52 + extra * 58 : rows * 58));
             list.revalidate();
             list.repaint();
+            head.repaint();
+            resize.run();
         };
         add.addActionListener(e -> {
             String n = nickField.getText().trim();
@@ -1792,21 +2171,126 @@ public class BushLaunch {
                 err.setText(" ");
                 nickField.setText("");
                 saveFriends(cur);
+                bottomCards.show(bottom, "btn");
                 refresh[0].run();
             }
         });
         nickField.addActionListener(e -> add.doClick());
         refresh[0].run();
 
-        FlatButton close = new FlatButton("Zamknij", false);
-        close.addActionListener(e -> d.dispose());
-        JPanel south = new JPanel(new BorderLayout());
-        south.setOpaque(false);
-        south.add(close, BorderLayout.EAST);
-        body.add(head, BorderLayout.NORTH);
-        body.add(scroll, BorderLayout.CENTER);
-        body.add(south, BorderLayout.SOUTH);
-        d.setVisible(true);
+        root.add(scroll, BorderLayout.CENTER);
+        root.add(bottom, BorderLayout.SOUTH);
+        return root;
+    }
+
+    /** Wiersz znajomego: głowa ze skina + kropka statusu, nick, opis i przycisk Dołącz. */
+    /** Własny wiersz na górze listy znajomych: ten sam awatar z kropką co u reszty. */
+    private final class SelfRow extends JComponent {
+        SelfRow() {
+            setPreferredSize(new Dimension(306, 58));
+            setMaximumSize(new Dimension(Integer.MAX_VALUE, 58));
+            setAlignmentX(Component.LEFT_ALIGNMENT);
+        }
+
+        @Override
+        protected void paintComponent(Graphics g0) {
+            Graphics2D g = (Graphics2D) g0.create();
+            aa(g);
+            int w = getWidth();
+            int cy = getHeight() / 2;
+            String state = selfState();
+            drawAvatar(g, skin, 16, cy - 17, 34, state, new Color(0x0D1318));
+            int tx = 66;
+            g.setFont(body(Font.BOLD, 16));
+            g.setColor(TEXT);
+            g.drawString(fit(g, nick, w - tx - 14), tx, cy - 3);
+            g.setFont(body(Font.PLAIN, 12));
+            g.setColor(MUTED);
+            String desc = "game".equals(state) ? "Ty · grasz teraz" : "online".equals(state) ? "Ty · online" : "Ty · offline";
+            g.drawString(desc, tx, cy + 15);
+            g.dispose();
+        }
+    }
+
+    private final class FriendRow extends Clickable {
+        private final String nick;
+        private final Runnable onRemove;
+        private final Runnable onJoin;
+        private final Rectangle joinRect = new Rectangle();
+        private final Rectangle removeRect = new Rectangle();
+
+        FriendRow(String nick, Runnable onRemove, Runnable onJoin) {
+            super(null);
+            this.nick = nick;
+            this.onRemove = onRemove;
+            this.onJoin = onJoin;
+            setCursor(Cursor.getDefaultCursor());
+            setPreferredSize(new Dimension(306, 58));
+            setMaximumSize(new Dimension(Integer.MAX_VALUE, 58));
+            setAlignmentX(Component.LEFT_ALIGNMENT);
+            addMouseListener(new MouseAdapter() {
+                @Override
+                public void mouseReleased(MouseEvent e) {
+                    if (javax.swing.SwingUtilities.isRightMouseButton(e) || removeRect.contains(e.getPoint())) {
+                        FriendRow.this.onRemove.run();
+                    } else if (joinRect.contains(e.getPoint())) {
+                        FriendRow.this.onJoin.run();
+                    }
+                }
+            });
+        }
+
+        @Override
+        protected void paintComponent(Graphics g0) {
+            Graphics2D g = (Graphics2D) g0.create();
+            aa(g);
+            String[] st = presenceOf(nick);
+            boolean off = "offline".equals(st[0]);
+            boolean game = "game".equals(st[0]);
+            int w = getWidth();
+            int cy = getHeight() / 2;
+            if (hover) {
+                g.setColor(alpha(Color.WHITE, 7));
+                g.fill(new RoundRectangle2D.Double(6, 2, w - 12, getHeight() - 4, 14, 14));
+            }
+            // głowa + kropka statusu
+            BufferedImage sk = friendSkins.get(nick);
+            drawAvatar(g, sk == NO_SKIN ? null : sk, 16, cy - 17, 34, st[0], new Color(0x0D1318));
+            // nick i opis
+            int tx = 66;
+            int right = game ? 84 : 14;
+            g.setFont(body(Font.BOLD, 16));
+            g.setColor(off ? new Color(0x7B8794) : TEXT);
+            g.drawString(fit(g, nick, w - tx - right), tx, cy - 3);
+            g.setFont(body(Font.PLAIN, 12));
+            g.setColor(off ? new Color(0x5E6A76) : MUTED);
+            g.drawString(fit(g, st[1], w - tx - right), tx, cy + 15);
+            // przycisk Dołącz
+            joinRect.setBounds(0, 0, 0, 0);
+            if (game) {
+                int bw = 62;
+                int bh = 28;
+                joinRect.setBounds(w - 14 - bw, cy - bh / 2, bw, bh);
+                g.setPaint(new GradientPaint(0, joinRect.y, ACCENT_HI, 0, joinRect.y + bh, ACCENT));
+                g.fill(new RoundRectangle2D.Double(joinRect.x, joinRect.y, bw, bh, 14, 14));
+                g.setFont(body(Font.BOLD, 13));
+                g.setColor(ON_ACCENT);
+                String t = "Dołącz";
+                g.drawString(t, joinRect.x + (bw - g.getFontMetrics().stringWidth(t)) / 2, mid(g, cy));
+            }
+            // usuwanie (krzyżyk po najechaniu, dla wierszy bez przycisku Dołącz) / prawy przycisk myszy
+            removeRect.setBounds(0, 0, 0, 0);
+            if (hover && !game) {
+                removeRect.setBounds(w - 40, cy - 14, 28, 28);
+                g.setColor(MUTED);
+                g.setStroke(new BasicStroke(1.5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+                int cx = w - 26;
+                g.drawLine(cx - 4, cy - 4, cx + 4, cy + 4);
+                g.drawLine(cx - 4, cy + 4, cx + 4, cy - 4);
+                setToolTipText("Usuń znajomego (lub prawy przycisk myszy)");
+            }
+            g.dispose();
+        }
     }
 
     private static void part(Graphics2D g, BufferedImage s, int sx, int sy, int sw, int sh,
@@ -1840,6 +2324,47 @@ public class BushLaunch {
         } else {
             part(g, s, 8, 8, 8, 8, x, y, size, size, false);
             part(g, s, 40, 8, 8, 8, x - size * 0.04, y - size * 0.04, size * 1.08, size * 1.08, false);
+        }
+        g.dispose();
+    }
+
+    /** Kolor kropki statusu: game = zielony, online = niebieski, offline = szary. */
+    static Color statusColor(String state) {
+        if ("game".equals(state)) {
+            return ACCENT;
+        }
+        if ("offline".equals(state)) {
+            return new Color(0x4A5560);
+        }
+        return new Color(0x3B9BFF);
+    }
+
+    /**
+     * Wspólny awatar gracza: głowa ze skina w zaokrąglonym kwadracie + kropka statusu w prawym dolnym rogu.
+     * state: game | online | offline (null = bez kropki), ring = kolor tła pod awatarem (obwódka kropki).
+     */
+    static void drawAvatar(Graphics2D g0, BufferedImage s, int x, int y, int size, String state, Color ring) {
+        Graphics2D g = (Graphics2D) g0.create();
+        g.setRenderingHint(RenderingHints.KEY_ANTIALIASING, RenderingHints.VALUE_ANTIALIAS_ON);
+        double arc = size * 0.26;
+        Graphics2D gh = (Graphics2D) g.create();
+        gh.clip(new RoundRectangle2D.Double(x, y, size, size, arc, arc));
+        drawHead(gh, s, x, y, size);
+        if ("offline".equals(state)) {
+            gh.setColor(alpha(new Color(0x0D1318), 150));
+            gh.fillRect(x, y, size, size);
+        }
+        gh.dispose();
+        if (state != null) {
+            double outer = Math.max(10, Math.round(size * 0.47));
+            double rw = Math.max(2, Math.round(outer * 0.125));
+            double cx = x + size * 0.87;
+            double cy = y + size * 0.87;
+            g.setColor(ring);
+            g.fill(new Ellipse2D.Double(cx - outer / 2, cy - outer / 2, outer, outer));
+            double in = outer - 2 * rw;
+            g.setColor(statusColor(state));
+            g.fill(new Ellipse2D.Double(cx - in / 2, cy - in / 2, in, in));
         }
         g.dispose();
     }
@@ -2623,13 +3148,31 @@ public class BushLaunch {
         nick = msAccount != null ? msAccount.name() : "";
     }
 
+    /** Status własnego awatara: game = gra uruchomiona, online = zalogowany i połączony, offline = reszta. */
+    private String selfState() {
+        if (!isMicrosoft() || !online) {
+            return "offline";
+        }
+        return gameRunning ? "game" : "online";
+    }
+
+    private void repaintSelf() {
+        if (sidebarUser != null) {
+            sidebarUser.repaint();
+        }
+        if (titleAvatar != null) {
+            titleAvatar.repaint();
+        }
+        if (hero != null) {
+            hero.repaint();
+        }
+    }
+
     private void applyAccount() {
         nick = msAccount != null ? msAccount.name() : "";
         skin = null;
         loadSkinAsync();
-        if (sidebarUser != null) {
-            sidebarUser.repaint();
-        }
+        repaintSelf();
         if (frame != null) {
             frame.repaint();
         }
@@ -2874,7 +3417,7 @@ public class BushLaunch {
                     Graphics2D g = (Graphics2D) g0.create();
                     aa(g);
                     card(g, 0, 0, getWidth(), getHeight(), 14, false);
-                    drawHead(g, skin, 12, 14, 44);
+                    drawAvatar(g, skin, 12, 14, 44, selfState(), new Color(0x10171E));
                     g.setFont(body(Font.BOLD, 17));
                     g.setColor(TEXT);
                     g.drawString(fit(g, nick.isEmpty() ? "Gość" : nick, getWidth() - 90), 68, 34);
@@ -3453,6 +3996,7 @@ public class BushLaunch {
             SwingUtilities.invokeLater(() -> {
                 gameRunning = true;
                 hero.repaint();
+                repaintSelf();
             });
 
             long started = System.currentTimeMillis();
@@ -3476,6 +4020,7 @@ public class BushLaunch {
         } finally {
             SwingUtilities.invokeLater(() -> {
                 gameRunning = false;
+                repaintSelf();
                 setBusy(false);
                 refreshStats();
                 refreshRecent();
