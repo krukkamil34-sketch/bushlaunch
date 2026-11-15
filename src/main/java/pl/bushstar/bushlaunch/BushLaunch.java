@@ -317,6 +317,7 @@ public class BushLaunch {
     private JLabel modsInfo;
     private Component sidebarUser;
     private Component titleAvatar;
+    private JPanel accountPage;
 
     // znajomi (serwer znajomych)
     private Social socialApi;
@@ -431,6 +432,9 @@ public class BushLaunch {
         pages.add(buildModsPage(), "mods");
         pages.add(buildNewsPage(), "news");
         pages.add(buildConsolePage(), "console");
+        accountPage = new JPanel(new BorderLayout());
+        accountPage.setBackground(BG);
+        pages.add(accountPage, "account");
 
         JPanel main = new JPanel(new BorderLayout());
         main.setBackground(BG);
@@ -439,6 +443,9 @@ public class BushLaunch {
 
         root.add(buildTitleBar(), BorderLayout.NORTH);
         root.add(main, BorderLayout.CENTER);
+        if (bottomBar != null) {
+            root.add(bottomBar, BorderLayout.SOUTH);
+        }
 
         return root;
     }
@@ -693,6 +700,9 @@ public class BushLaunch {
     }
 
     private void showPage(String key) {
+        if ("account".equals(key)) {
+            refreshAccountPage();
+        }
         cards.show(pages, key);
         for (Map.Entry<String, NavButton> e : navs.entrySet()) {
             e.getValue().active = e.getKey().equals(key);
@@ -834,7 +844,6 @@ public class BushLaunch {
         JPanel south = new JPanel(new BorderLayout(0, 12));
         south.setOpaque(false);
         south.add(news, BorderLayout.NORTH);
-        south.add(bottomBar, BorderLayout.SOUTH);
 
         home.add(heroPanel, BorderLayout.CENTER);
         home.add(south, BorderLayout.SOUTH);
@@ -3719,9 +3728,113 @@ public class BushLaunch {
         return b;
     }
 
-    /** Okno konta: logowanie przez Microsoft (przeglądarka, zapasowo kod). */
+    /** Otwiera pełną stronę konta w głównym oknie launchera. */
     private void openAccountDialog() {
-        openAccountDialog(null);
+        if (busy) return;
+        showPage("account");
+    }
+
+    /** Buduje stronę konta zgodnie z referencyjnym układem BushLaunch. */
+    private void refreshAccountPage() {
+        if (accountPage == null) return;
+        accountPage.removeAll();
+        JPanel content = new JPanel();
+        content.setOpaque(false);
+        content.setLayout(new BoxLayout(content, BoxLayout.Y_AXIS));
+        content.setBorder(new EmptyBorder(22, 20, 20, 20));
+
+        JLabel heading = new JLabel("Konto");
+        heading.setForeground(TEXT);
+        heading.setFont(head(Font.BOLD, 28));
+        heading.setAlignmentX(Component.LEFT_ALIGNMENT);
+        JLabel subtitle = htmlLabel("Logowanie przez oficjalne konto Microsoft", MUTED, 14, Font.PLAIN);
+        content.add(heading);
+        content.add(Box.createVerticalStrut(3));
+        content.add(subtitle);
+        content.add(Box.createVerticalStrut(32));
+
+        JPanel profile = new JPanel(new BorderLayout(18, 0));
+        profile.setOpaque(true);
+        profile.setBackground(new Color(0x101D1C));
+        profile.setBorder(BorderFactory.createCompoundBorder(
+                BorderFactory.createLineBorder(ACCENT_DIM, 1), new EmptyBorder(18, 18, 18, 18)));
+        JComponent avatar = new JComponent() {
+            @Override protected void paintComponent(Graphics g0) {
+                Graphics2D g = (Graphics2D) g0.create(); aa(g);
+                drawAvatar(g, skin, 0, 0, 68, selfState(), new Color(0x10171E));
+                g.dispose();
+            }
+        };
+        avatar.setPreferredSize(new Dimension(68, 68));
+        profile.add(avatar, BorderLayout.WEST);
+        JPanel identity = new JPanel();
+        identity.setOpaque(false);
+        identity.setLayout(new BoxLayout(identity, BoxLayout.Y_AXIS));
+        JLabel username = new JLabel(isMicrosoft() ? msAccount.name() : "Nie zalogowano");
+        username.setForeground(TEXT); username.setFont(body(Font.BOLD, 20));
+        JLabel provider = new JLabel("▦  Konto Microsoft  ·  Minecraft Java");
+        provider.setForeground(MUTED); provider.setFont(body(Font.PLAIN, 14));
+        identity.add(username); identity.add(Box.createVerticalStrut(5)); identity.add(provider);
+        profile.add(identity, BorderLayout.CENTER);
+        JLabel active = new JLabel(isMicrosoft() ? "✓  Aktywne" : "Nieaktywne");
+        active.setOpaque(true); active.setBackground(isMicrosoft() ? ACCENT : PANEL_HI);
+        active.setForeground(isMicrosoft() ? ON_ACCENT : MUTED);
+        active.setFont(body(Font.BOLD, 12));
+        active.setBorder(new EmptyBorder(8, 13, 8, 13));
+        profile.add(active, BorderLayout.EAST);
+        profile.setMaximumSize(new Dimension(Integer.MAX_VALUE, 120));
+        profile.setAlignmentX(Component.LEFT_ALIGNMENT);
+        content.add(profile);
+        content.add(Box.createVerticalStrut(14));
+
+        JPanel details = new JPanel(new GridLayout(1, 3, 8, 0));
+        details.setOpaque(false);
+        String[][] values = isMicrosoft()
+                ? new String[][]{{"Sesja", "zapamiętana"}, {"Licencja", "Java Edition"}, {"Ostatnio", "dzisiaj"}}
+                : new String[][]{{"Sesja", "brak"}, {"Licencja", "nieznana"}, {"Ostatnio", "—"}};
+        for (String[] value : values) {
+            JPanel tile = new JPanel(); tile.setOpaque(true); tile.setBackground(PANEL);
+            tile.setBorder(new EmptyBorder(12, 12, 12, 10));
+            tile.setLayout(new BoxLayout(tile, BoxLayout.Y_AXIS));
+            JLabel cap = new JLabel(value[0]); cap.setForeground(MUTED); cap.setFont(body(Font.PLAIN, 12));
+            JLabel val = new JLabel(value[1]); val.setForeground(isMicrosoft() ? ACCENT_HI : TEXT); val.setFont(head(Font.BOLD, 14));
+            tile.add(cap); tile.add(Box.createVerticalStrut(5)); tile.add(val); details.add(tile);
+        }
+        details.setMaximumSize(new Dimension(Integer.MAX_VALUE, 64));
+        details.setAlignmentX(Component.LEFT_ALIGNMENT);
+        content.add(details);
+        content.add(Box.createVerticalStrut(12));
+
+        JPanel remember = new JPanel(new BorderLayout());
+        remember.setBackground(PANEL);
+        remember.setBorder(BorderFactory.createCompoundBorder(BorderFactory.createLineBorder(BORDER), new EmptyBorder(13, 14, 13, 14)));
+        JLabel rememberText = new JLabel("Zapamiętaj sesję na tym komputerze");
+        rememberText.setForeground(TEXT); rememberText.setFont(body(Font.PLAIN, 14));
+        remember.add(rememberText, BorderLayout.CENTER);
+        JCheckBox rememberToggle = new JCheckBox();
+        rememberToggle.setSelected(Boolean.parseBoolean(config.getProperty("rememberSession", "true")));
+        rememberToggle.setOpaque(false);
+        rememberToggle.addActionListener(e -> { config.setProperty("rememberSession", Boolean.toString(rememberToggle.isSelected())); saveConfig(); });
+        remember.add(rememberToggle, BorderLayout.EAST);
+        remember.setMaximumSize(new Dimension(Integer.MAX_VALUE, 52));
+        remember.setAlignmentX(Component.LEFT_ALIGNMENT);
+        content.add(remember);
+        content.add(Box.createVerticalStrut(12));
+
+        FlatButton addAccount = wideButton(isMicrosoft() ? "Dodaj kolejne konto Microsoft" : "Zaloguj przez Microsoft", true,
+                () -> openAccountDialog(() -> showPage("account")));
+        content.add(addAccount);
+        if (isMicrosoft()) {
+            content.add(Box.createVerticalStrut(8));
+            content.add(wideButton("Wyloguj z tego komputera", false, () -> {
+                MicrosoftAuth.deleteAccount(baseDir); msAccount = null; applyAccount(); showPage("account");
+            }));
+        }
+        content.add(Box.createVerticalStrut(14));
+        content.add(htmlLabel("Hasło wpisujesz wyłącznie na oficjalnej stronie Microsoft.", MUTED, 12, Font.PLAIN));
+        accountPage.add(content, BorderLayout.NORTH);
+        accountPage.revalidate();
+        accountPage.repaint();
     }
 
     /** afterLogin: co zrobić po udanym zalogowaniu (np. dokończyć kliknięcie GRAJ). */
