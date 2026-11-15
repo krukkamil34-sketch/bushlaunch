@@ -43,6 +43,15 @@ jobs:
           if (-not $id) { $id = "a33244ce-944d-4cf7-81c4-b5893f5668e4" }
           "clientId=$id" | Out-File -Encoding ascii src\main\resources\auth.properties
 
+      # Adres serwera znajomych (opcjonalnie). Ustaw w repozytorium:
+      # Settings > Secrets and variables > Actions > Variables > New variable: FRIENDS_URL
+      # Pusty = launcher działa z lokalną listą znajomych (bez potwierdzania zaproszeń)
+      - name: Adres serwera znajomych
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force src\main\resources | Out-Null
+          "url=${{ vars.FRIENDS_URL }}" | Out-File -Encoding ascii src\main\resources\social.properties
+
       # target/BushLaunch.exe - jeden plik, uruchamiany dwuklikiem (wymaga Javy 17+)
       - name: Build BushLaunch.exe (jar + launch4j)
         run: mvn -B package

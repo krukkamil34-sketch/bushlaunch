@@ -291,7 +291,8 @@ public class BushLaunch {
 
     private boolean loadingVersions = true;
     private boolean busy;
-    private boolean gameRunning;
+    private volatile boolean gameRunning;
+    private volatile String gameInfo = "";
     private boolean indeterminate;
     private int progDone;
     private int progTotal;
@@ -316,6 +317,22 @@ public class BushLaunch {
     private JLabel modsInfo;
     private Component sidebarUser;
     private Component titleAvatar;
+
+    // znajomi (serwer znajomych)
+    private Social socialApi;
+    private volatile Social.Snapshot socialSnap;
+    private volatile String socialStatus = "";
+    private volatile Social.Creds socialCredsCache;
+    private volatile long socialCredsAt;
+    private final Object authLock = new Object();
+    private final Map<String, String> friendUuids = new java.util.concurrent.ConcurrentHashMap<>();
+    private final java.util.Set<String> seenRequests = java.util.concurrent.ConcurrentHashMap.newKeySet();
+    private java.util.concurrent.ScheduledExecutorService socialExec;
+    private boolean socialHookAdded;
+    private JDialog friendsDialog;
+    private long friendsClosedAt;
+    private String friendsNote = "";
+    private Runnable friendsRefresh;
 
     /** Profil gracza: nazwa + wersja gry. Zapisywany w config.properties. */
     private static final class Profile {
@@ -393,6 +410,7 @@ public class BushLaunch {
         refreshStats();
         loadSkinAsync();
         loadFriendSkins();
+        startSocial();
         loadVersions();
         if (Boolean.parseBoolean(config.getProperty("autoUpdate", "true"))) {
             checkForUpdates(false);
@@ -1095,6 +1113,21 @@ public class BushLaunch {
             g.setColor(hoverFriends ? alpha(ACCENT, 160) : alpha(Color.WHITE, 30));
             g.setStroke(new BasicStroke(1f));
             g.draw(new RoundRectangle2D.Double(px + 0.5, py + 0.5, pw - 1, ph - 1, ph, ph));
+            Social.Snapshot snap = socialSnap;
+            int reqs = snap == null ? 0 : snap.incoming().size();
+            if (reqs > 0) {
+                int bd = 22;
+                int bx = px + pw - bd + 6;
+                int by = py - 7;
+                g.setColor(BG);
+                g.fill(new Ellipse2D.Double(bx - 2, by - 2, bd + 4, bd + 4));
+                g.setColor(ACCENT_HI);
+                g.fill(new Ellipse2D.Double(bx, by, bd, bd));
+                g.setFont(body(Font.BOLD, 13));
+                g.setColor(ON_ACCENT);
+                String bt = reqs > 9 ? "9+" : String.valueOf(reqs);
+                g.drawString(bt, bx + (bd - g.getFontMetrics().stringWidth(bt)) / 2, mid(g, by + bd / 2));
+            }
 
             int x = px + 18;
             if (ok) {
@@ -1920,6 +1953,224 @@ public class BushLaunch {
 
     // ------------------------------------------------------------------ znajomi (lista lokalna)
 
+    // ------------------------------------------------------------------ serwer znajomych
+
+    /** Adres serwera znajomych: config.properties (socialUrl) albo social.properties wbudowany w jar. Pusty = tryb lokalny. */
+    private String socialUrl() {
+        String c = config.getProperty("socialUrl", "").trim();
+        if (c.isEmpty()) {
+            try (InputStream in = BushLaunch.class.getResourceAsStream("/social.properties")) {
+                if (in != null) {
+                    Properties p = new Properties();
+                    p.load(in);
+                    c = p.getProperty("url", "").trim();
+                }
+            } catch (IOException ignored) {
+                // brak pliku = tryb lokalny
+            }
+        }
+        while (c.endsWith("/")) {
+            c = c.substring(0, c.length() - 1);
+        }
+        return c;
+    }
+
+    private boolean socialEnabled() {
+        return !socialUrl().isEmpty();
+    }
+
+    /** Nick, UUID i token gry do potwierdzenia konta u Mojangu (z tą samą blokadą co start gry). */
+    private Social.Creds socialCreds() throws Exception {
+        synchronized (authLock) {
+            MicrosoftAuth.Account acc = msAccount;
+            if (acc == null) {
+                throw new IOException("Zaloguj się kontem Microsoft, żeby korzystać ze znajomych.");
+            }
+            Social.Creds c = socialCredsCache;
+            if (c != null && c.uuid().equals(acc.uuid()) && System.currentTimeMillis() - socialCredsAt < 6 * 3600_000L) {
+                return c;
+            }
+            String cid = msClientId();
+            if (cid == null || cid.isBlank()) {
+                throw new IOException("Brak konfiguracji logowania Microsoft.");
+            }
+            MicrosoftAuth.Login l = MicrosoftAuth.refresh(cid, acc, s -> { });
+            MicrosoftAuth.Account fresh = new MicrosoftAuth.Account(l.name(), l.uuid(), l.refreshToken());
+            MicrosoftAuth.saveAccount(baseDir, fresh);
+            msAccount = fresh;
+            c = new Social.Creds(l.name(), l.uuid(), l.mcToken());
+            socialCredsCache = c;
+            socialCredsAt = System.currentTimeMillis();
+            return c;
+        }
+    }
+
+    private void startSocial() {
+        if (socialExec != null) {
+            socialExec.shutdownNow();
+            socialExec = null;
+        }
+        socialApi = null;
+        socialSnap = null;
+        friendUuids.clear();
+        if (!socialEnabled()) {
+            socialStatus = "";
+            refreshSocialUi();
+            return;
+        }
+        if (!isMicrosoft()) {
+            socialStatus = "Zaloguj się kontem Microsoft, żeby korzystać ze znajomych.";
+            refreshSocialUi();
+            return;
+        }
+        socialStatus = "";
+        socialApi = new Social(socialUrl(), this::socialCreds, "BushLaunch/" + LAUNCHER_VERSION);
+        if (!socialHookAdded) {
+            socialHookAdded = true;
+            Runtime.getRuntime().addShutdownHook(new Thread(() -> {
+                Social a = socialApi;
+                if (a != null) {
+                    a.offline();
+                }
+            }));
+        }
+        socialExec = java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+            Thread t = new Thread(r, "social");
+            t.setDaemon(true);
+            return t;
+        });
+        socialExec.scheduleWithFixedDelay(this::socialTick, 0, 20, java.util.concurrent.TimeUnit.SECONDS);
+    }
+
+    /** Natychmiastowy ping (np. po starcie/zakończeniu gry), żeby znajomi od razu widzieli zmianę. */
+    private void socialPingNow() {
+        java.util.concurrent.ScheduledExecutorService ex = socialExec;
+        if (ex != null) {
+            try {
+                ex.execute(this::socialTick);
+            } catch (RuntimeException ignored) {
+                // executor właśnie się zamyka
+            }
+        }
+    }
+
+    private void socialTick() {
+        Social api = socialApi;
+        if (api == null) {
+            return;
+        }
+        try {
+            Social.Snapshot sn = api.ping(gameRunning ? "game" : "online", gameInfo);
+            if (!"1".equals(config.getProperty("friendsMigrated", ""))) {
+                // jednorazowo: dotychczasowa lokalna lista -> zaproszenia (druga strona musi je potwierdzić)
+                for (String f : friends()) {
+                    try {
+                        api.request(f);
+                    } catch (IOException ignored) {
+                        // np. już wysłane albo limit - pomijamy
+                    }
+                }
+                SwingUtilities.invokeLater(() -> {
+                    config.setProperty("friendsMigrated", "1");
+                    saveConfig();
+                });
+                sn = api.fetch();
+            }
+            socialStatus = "";
+            applySnapshot(sn);
+        } catch (Exception e) {
+            String m = e.getMessage();
+            socialStatus = m == null || m.isBlank() ? "Brak połączenia z serwerem znajomych." : m;
+            SwingUtilities.invokeLater(this::refreshSocialUi);
+        }
+    }
+
+    private static String presenceText(Social.Friend f) {
+        if ("game".equals(f.state())) {
+            return f.info().isEmpty() ? "Gra w Minecraft" : f.info();
+        }
+        return "online".equals(f.state()) ? "Online w launcherze" : "Offline";
+    }
+
+    private void applySnapshot(Social.Snapshot sn) {
+        List<String> names = new ArrayList<>();
+        for (Social.Friend f : sn.friends()) {
+            presence.put(f.name(), new String[]{f.state(), presenceText(f)});
+            friendUuids.put(f.name(), f.uuid());
+            names.add(f.name());
+        }
+        boolean fresh = false;
+        for (Social.Request r : sn.incoming()) {
+            if (seenRequests.add(r.uuid())) {
+                fresh = true;
+            }
+        }
+        final boolean newRequest = fresh;
+        socialSnap = sn;
+        SwingUtilities.invokeLater(() -> {
+            // ostatnio znana lista zostaje w config (widać ją też bez połączenia)
+            String joined = String.join(",", names);
+            if (!joined.equals(config.getProperty("friends", ""))) {
+                config.setProperty("friends", joined);
+                saveConfig();
+            }
+            loadFriendSkins();
+            refreshSocialUi();
+            if (newRequest) {
+                appendLog("Nowe zaproszenie do znajomych - otwórz listę znajomych, żeby je potwierdzić.");
+                if (frame != null && frame.isActive() && friendsDialog == null) {
+                    openFriendsDialog();
+                }
+            }
+        });
+    }
+
+    private void refreshSocialUi() {
+        if (hero != null) {
+            hero.repaint();
+        }
+        if (friendsRefresh != null) {
+            friendsRefresh.run();
+        }
+    }
+
+    private interface SocialCall {
+        void run(Social api) throws Exception;
+    }
+
+    /** Wykonuje akcję na serwerze znajomych w tle, odświeża listę i woła done(błąd albo null) w wątku okna. */
+    private void socialDo(SocialCall call, java.util.function.Consumer<String> done) {
+        Social api = socialApi;
+        if (api == null) {
+            if (done != null) {
+                done.accept("Zaloguj się kontem Microsoft, żeby korzystać ze znajomych.");
+            }
+            return;
+        }
+        Thread t = new Thread(() -> {
+            String err = null;
+            try {
+                call.run(api);
+                applySnapshot(api.fetch());
+            } catch (Exception e) {
+                err = e.getMessage() == null ? "Nie udało się wykonać akcji." : e.getMessage();
+            }
+            final String fe = err;
+            SwingUtilities.invokeLater(() -> {
+                friendsNote = fe == null || done != null ? "" : fe;
+                if (done != null) {
+                    done.accept(fe);
+                } else if (fe != null) {
+                    refreshSocialUi();
+                }
+            });
+        }, "social-action");
+        t.setDaemon(true);
+        t.start();
+    }
+
+    // ------------------------------------------------------------------ znajomi (lista)
+
     private List<String> friends() {
         List<String> out = new ArrayList<>();
         for (String f : config.getProperty("friends", "").split(",")) {
@@ -1939,8 +2190,27 @@ public class BushLaunch {
         }
     }
 
+    /** Nicki, których głowy potrzebujemy: znajomi oraz osoby z zaproszeń (przychodzących i wysłanych). */
+    private List<String> skinNames() {
+        List<String> out = friends();
+        Social.Snapshot sn = socialSnap;
+        if (sn != null) {
+            for (Social.Request r : sn.incoming()) {
+                if (!out.contains(r.name())) {
+                    out.add(r.name());
+                }
+            }
+            for (String o : sn.outgoing()) {
+                if (!out.contains(o)) {
+                    out.add(o);
+                }
+            }
+        }
+        return out;
+    }
+
     private void loadFriendSkins() {
-        for (String f : friends()) {
+        for (String f : skinNames()) {
             if (friendSkins.containsKey(f)) {
                 continue;
             }
@@ -1970,6 +2240,14 @@ public class BushLaunch {
     }
 
     private void openFriendsDialog() {
+        if (friendsDialog != null && friendsDialog.isShowing()) {
+            friendsDialog.toFront();
+            return;
+        }
+        if (System.currentTimeMillis() - friendsClosedAt < 350) {
+            return; // kliknięcie w plakietkę, które właśnie zamknęło listę, nie otwiera jej od nowa
+        }
+        friendsNote = "";
         JDialog d = new JDialog(frame, false);
         d.setUndecorated(true);
         Runnable[] resize = new Runnable[1];
@@ -1981,20 +2259,45 @@ public class BushLaunch {
             d.setLocation(fp.x + frame.getWidth() - d.getWidth() - 34, fp.y + 126);
         };
         resize[0].run();
+        final long opened = System.currentTimeMillis();
+        // klik w głównym oknie poza listą zamyka listę (nie polegamy tylko na utracie fokusu)
+        java.awt.event.AWTEventListener outside = ev -> {
+            if (ev instanceof MouseEvent me && me.getID() == MouseEvent.MOUSE_PRESSED
+                    && me.getSource() instanceof Component c
+                    && SwingUtilities.getWindowAncestor(c) == frame
+                    && System.currentTimeMillis() - opened > 250) {
+                d.dispose();
+            }
+        };
+        java.awt.Toolkit.getDefaultToolkit().addAWTEventListener(outside, java.awt.AWTEvent.MOUSE_EVENT_MASK);
         d.addWindowListener(new java.awt.event.WindowAdapter() {
             @Override
             public void windowDeactivated(java.awt.event.WindowEvent e) {
-                d.dispose();
+                // tuż po otwarciu okno bywa jeszcze "przekazywane" - nie zamykamy go od razu
+                if (System.currentTimeMillis() - opened > 400) {
+                    d.dispose();
+                }
+            }
+
+            @Override
+            public void windowClosed(java.awt.event.WindowEvent e) {
+                java.awt.Toolkit.getDefaultToolkit().removeAWTEventListener(outside);
+                friendsDialog = null;
+                friendsRefresh = null;
+                friendsClosedAt = System.currentTimeMillis();
             }
         });
+        friendsDialog = d;
         d.setVisible(true);
+        d.toFront();
+        d.requestFocus();
     }
 
     private JPanel buildFriendsPanel(Runnable close, Runnable resize) {
         final int W = 306;
         JPanel root = new JPanel(new BorderLayout());
-        root.setBackground(new Color(0x0D1318));
-        root.setBorder(BorderFactory.createLineBorder(new Color(0x1E2A34)));
+        root.setBackground(new Color(0x071006));
+        root.setBorder(BorderFactory.createLineBorder(new Color(0x20321D)));
 
         // nagłówek: Znajomi · 3/4 online  [x]
         JComponent head = new Clickable(null) {
@@ -2060,8 +2363,8 @@ public class BushLaunch {
         JScrollPane scroll = darkScroll(wrap);
         scroll.setBorder(new EmptyBorder(0, 0, 0, 0));
         scroll.getViewport().setOpaque(false);
-        scroll.getViewport().setBackground(new Color(0x0D1318));
-        scroll.getVerticalScrollBar().setBackground(new Color(0x0D1318));
+        scroll.getViewport().setBackground(new Color(0x071006));
+        scroll.getVerticalScrollBar().setBackground(new Color(0x071006));
 
         // dolny przycisk "Dodaj znajomego" z przerywaną ramką, po kliknięciu pole na nick
         CardLayout bottomCards = new CardLayout();
@@ -2127,31 +2430,60 @@ public class BushLaunch {
         Runnable[] refresh = new Runnable[1];
         refresh[0] = () -> {
             list.removeAll();
-            List<String> fs = friends();
-            int extra = validNick(nick) ? 1 : 0;
-            if (extra == 1) {
+            final boolean srv = socialEnabled();
+            Social.Snapshot sn = socialSnap;
+            if (srv && !socialStatus.isEmpty()) {
+                list.add(noteRow(socialStatus, new Color(0xFF6B5A)));
+            }
+            if (!friendsNote.isEmpty()) {
+                list.add(noteRow(friendsNote, new Color(0xFF6B5A)));
+            }
+            if (validNick(nick)) {
                 list.add(new SelfRow());
+            }
+            List<String> fs = friends();
+            boolean hasIncoming = srv && sn != null && !sn.incoming().isEmpty();
+            if (hasIncoming) {
+                list.add(new SectionLabel("ZAPROSZENIA · " + sn.incoming().size()));
+                for (Social.Request rq : sn.incoming()) {
+                    list.add(new IncomingRow(rq.name(),
+                            () -> socialDo(api -> api.accept(rq.uuid()), null),
+                            () -> socialDo(api -> api.decline(rq.uuid()), null)));
+                }
+                if (!fs.isEmpty()) {
+                    list.add(new SectionLabel("ZNAJOMI"));
+                }
             }
             for (String f : fs) {
                 list.add(new FriendRow(f, () -> {
-                    List<String> cur = friends();
-                    cur.remove(f);
-                    saveFriends(cur);
-                    refresh[0].run();
+                    String id = friendUuids.get(f);
+                    if (srv && id != null) {
+                        socialDo(api -> api.remove(id), null);
+                    } else {
+                        List<String> cur = friends();
+                        cur.remove(f);
+                        saveFriends(cur);
+                        refresh[0].run();
+                    }
                 }, () -> {
                     close.run();
                     onPlay();
                 }));
             }
-            if (fs.isEmpty()) {
+            if (fs.isEmpty() && !hasIncoming) {
                 JLabel none = new JLabel("  Nie masz jeszcze znajomych.");
                 none.setForeground(MUTED);
                 none.setFont(body(Font.PLAIN, 13));
                 none.setBorder(new EmptyBorder(14, 14, 14, 14));
                 list.add(none);
             }
-            int rows = Math.max(1, Math.min(6, fs.size() + extra));
-            scroll.setPreferredSize(new Dimension(W, fs.isEmpty() ? 52 + extra * 58 : rows * 58));
+            if (srv && sn != null && !sn.outgoing().isEmpty()) {
+                list.add(new SectionLabel("WYSŁANE · " + sn.outgoing().size()));
+                for (String o : sn.outgoing()) {
+                    list.add(new OutgoingRow(o, () -> socialDo(api -> api.cancel(o), null)));
+                }
+            }
+            scroll.setPreferredSize(new Dimension(W, Math.max(52, Math.min(372, list.getPreferredSize().height))));
             list.revalidate();
             list.repaint();
             head.repaint();
@@ -2161,7 +2493,23 @@ public class BushLaunch {
             String n = nickField.getText().trim();
             List<String> cur = friends();
             if (!validNick(n)) {
+                err.setForeground(new Color(0xFF6B5A));
                 err.setText("Nick: 3-16 znaków (litery, cyfry, _).");
+            } else if (socialEnabled()) {
+                err.setForeground(MUTED);
+                err.setText("Wysyłanie...");
+                final boolean[] accepted = new boolean[1];
+                socialDo(api -> accepted[0] = api.request(n), er -> {
+                    if (er != null) {
+                        err.setForeground(new Color(0xFF6B5A));
+                        err.setText(er);
+                    } else {
+                        err.setForeground(ACCENT_HI);
+                        err.setText(accepted[0] ? n + " jest już Twoim znajomym."
+                                : "Wysłano - " + n + " musi potwierdzić w launcherze.");
+                        nickField.setText("");
+                    }
+                });
             } else if (cur.stream().anyMatch(x -> x.equalsIgnoreCase(n))) {
                 err.setText("Ten gracz już jest na liście.");
             } else if (cur.size() >= 30) {
@@ -2176,6 +2524,7 @@ public class BushLaunch {
             }
         });
         nickField.addActionListener(e -> add.doClick());
+        friendsRefresh = refresh[0];
         refresh[0].run();
 
         root.add(scroll, BorderLayout.CENTER);
@@ -2183,7 +2532,37 @@ public class BushLaunch {
         return root;
     }
 
-    /** Wiersz znajomego: głowa ze skina + kropka statusu, nick, opis i przycisk Dołącz. */
+    /** Nagłówek sekcji na liście znajomych. */
+    private static final class SectionLabel extends JComponent {
+        private final String text;
+
+        SectionLabel(String text) {
+            this.text = text;
+            setPreferredSize(new Dimension(306, 30));
+            setMaximumSize(new Dimension(Integer.MAX_VALUE, 30));
+            setAlignmentX(Component.LEFT_ALIGNMENT);
+        }
+
+        @Override
+        protected void paintComponent(Graphics g0) {
+            Graphics2D g = (Graphics2D) g0.create();
+            aa(g);
+            g.setFont(tracked(mono(Font.PLAIN, 11), 0.14f));
+            g.setColor(MUTED);
+            g.drawString(text, 18, getHeight() - 8);
+            g.dispose();
+        }
+    }
+
+    private static JComponent noteRow(String text, Color color) {
+        JLabel l = new JLabel("<html><body style='width:262px'>" + escape(text) + "</body></html>");
+        l.setForeground(color);
+        l.setFont(body(Font.PLAIN, 12));
+        l.setBorder(new EmptyBorder(8, 16, 6, 16));
+        l.setAlignmentX(Component.LEFT_ALIGNMENT);
+        return l;
+    }
+
     /** Własny wiersz na górze listy znajomych: ten sam awatar z kropką co u reszty. */
     private final class SelfRow extends JComponent {
         SelfRow() {
@@ -2212,12 +2591,16 @@ public class BushLaunch {
         }
     }
 
+    /** Wiersz znajomego: głowa ze skina + kropka statusu, nick, opis i przycisk Dołącz. Usunięcie wymaga potwierdzenia. */
     private final class FriendRow extends Clickable {
         private final String nick;
         private final Runnable onRemove;
         private final Runnable onJoin;
         private final Rectangle joinRect = new Rectangle();
         private final Rectangle removeRect = new Rectangle();
+        private final Rectangle yesRect = new Rectangle();
+        private final Rectangle noRect = new Rectangle();
+        private boolean confirming;
 
         FriendRow(String nick, Runnable onRemove, Runnable onJoin) {
             super(null);
@@ -2231,9 +2614,18 @@ public class BushLaunch {
             addMouseListener(new MouseAdapter() {
                 @Override
                 public void mouseReleased(MouseEvent e) {
-                    if (javax.swing.SwingUtilities.isRightMouseButton(e) || removeRect.contains(e.getPoint())) {
-                        FriendRow.this.onRemove.run();
-                    } else if (joinRect.contains(e.getPoint())) {
+                    Point p = e.getPoint();
+                    if (confirming) {
+                        boolean yes = yesRect.contains(p);
+                        confirming = false;
+                        repaint();
+                        if (yes) {
+                            FriendRow.this.onRemove.run();
+                        }
+                    } else if (javax.swing.SwingUtilities.isRightMouseButton(e) || removeRect.contains(p)) {
+                        confirming = true;
+                        repaint();
+                    } else if (joinRect.contains(p)) {
                         FriendRow.this.onJoin.run();
                     }
                 }
@@ -2246,41 +2638,56 @@ public class BushLaunch {
             aa(g);
             String[] st = presenceOf(nick);
             boolean off = "offline".equals(st[0]);
-            boolean game = "game".equals(st[0]);
+            boolean game = "game".equals(st[0]) && !confirming;
             int w = getWidth();
             int cy = getHeight() / 2;
-            if (hover) {
-                g.setColor(alpha(Color.WHITE, 7));
+            if (hover || confirming) {
+                g.setColor(new Color(0x14220F));
                 g.fill(new RoundRectangle2D.Double(6, 2, w - 12, getHeight() - 4, 14, 14));
             }
             // głowa + kropka statusu
             BufferedImage sk = friendSkins.get(nick);
-            drawAvatar(g, sk == NO_SKIN ? null : sk, 16, cy - 17, 34, st[0], new Color(0x0D1318));
+            drawAvatar(g, sk == NO_SKIN ? null : sk, 16, cy - 17, 34, st[0], new Color(0x071006));
             // nick i opis
             int tx = 66;
-            int right = game ? 84 : 14;
+            int right = confirming ? 126 : game ? 84 : 14;
             g.setFont(body(Font.BOLD, 16));
             g.setColor(off ? new Color(0x7B8794) : TEXT);
             g.drawString(fit(g, nick, w - tx - right), tx, cy - 3);
             g.setFont(body(Font.PLAIN, 12));
-            g.setColor(off ? new Color(0x5E6A76) : MUTED);
-            g.drawString(fit(g, st[1], w - tx - right), tx, cy + 15);
+            g.setColor(confirming ? new Color(0xFF8A7A) : off ? new Color(0x5E6A76) : MUTED);
+            g.drawString(fit(g, confirming ? "Usunąć?" : st[1], w - tx - right), tx, cy + 15);
             // przycisk Dołącz
             joinRect.setBounds(0, 0, 0, 0);
             if (game) {
                 int bw = 62;
                 int bh = 28;
                 joinRect.setBounds(w - 14 - bw, cy - bh / 2, bw, bh);
-                g.setPaint(new GradientPaint(0, joinRect.y, ACCENT_HI, 0, joinRect.y + bh, ACCENT));
+                g.setPaint(new GradientPaint(0, joinRect.y, new Color(0xFFAA45), 0, joinRect.y + bh, new Color(0xFF8428)));
                 g.fill(new RoundRectangle2D.Double(joinRect.x, joinRect.y, bw, bh, 14, 14));
                 g.setFont(body(Font.BOLD, 13));
-                g.setColor(ON_ACCENT);
+                g.setColor(new Color(0x241306));
                 String t = "Dołącz";
                 g.drawString(t, joinRect.x + (bw - g.getFontMetrics().stringWidth(t)) / 2, mid(g, cy));
             }
-            // usuwanie (krzyżyk po najechaniu, dla wierszy bez przycisku Dołącz) / prawy przycisk myszy
+            // potwierdzenie usunięcia: Tak / Nie
+            yesRect.setBounds(0, 0, 0, 0);
+            noRect.setBounds(0, 0, 0, 0);
             removeRect.setBounds(0, 0, 0, 0);
-            if (hover && !game) {
+            if (confirming) {
+                noRect.setBounds(w - 14 - 48, cy - 14, 48, 28);
+                yesRect.setBounds(noRect.x - 8 - 48, cy - 14, 48, 28);
+                g.setColor(new Color(0xC9473A));
+                g.fill(new RoundRectangle2D.Double(yesRect.x, yesRect.y, 48, 28, 14, 14));
+                g.setColor(alpha(Color.WHITE, 22));
+                g.fill(new RoundRectangle2D.Double(noRect.x, noRect.y, 48, 28, 14, 14));
+                g.setFont(body(Font.BOLD, 13));
+                g.setColor(Color.WHITE);
+                g.drawString("Tak", yesRect.x + (48 - g.getFontMetrics().stringWidth("Tak")) / 2, mid(g, cy));
+                g.setColor(TEXT);
+                g.drawString("Nie", noRect.x + (48 - g.getFontMetrics().stringWidth("Nie")) / 2, mid(g, cy));
+            } else if (hover && !game) {
+                // usuwanie: krzyżyk po najechaniu (dla wierszy bez przycisku Dołącz) / prawy przycisk myszy
                 removeRect.setBounds(w - 40, cy - 14, 28, 28);
                 g.setColor(MUTED);
                 g.setStroke(new BasicStroke(1.5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
@@ -2289,6 +2696,123 @@ public class BushLaunch {
                 g.drawLine(cx - 4, cy + 4, cx + 4, cy - 4);
                 setToolTipText("Usuń znajomego (lub prawy przycisk myszy)");
             }
+            g.dispose();
+        }
+    }
+
+    /** Przychodzące zaproszenie: Akceptuj / Odrzuć. */
+    private final class IncomingRow extends Clickable {
+        private final String nick;
+        private final Rectangle acceptRect = new Rectangle();
+        private final Rectangle declineRect = new Rectangle();
+
+        IncomingRow(String nick, Runnable onAccept, Runnable onDecline) {
+            super(null);
+            this.nick = nick;
+            setCursor(Cursor.getDefaultCursor());
+            setPreferredSize(new Dimension(306, 58));
+            setMaximumSize(new Dimension(Integer.MAX_VALUE, 58));
+            setAlignmentX(Component.LEFT_ALIGNMENT);
+            addMouseListener(new MouseAdapter() {
+                @Override
+                public void mouseReleased(MouseEvent e) {
+                    if (acceptRect.contains(e.getPoint())) {
+                        onAccept.run();
+                    } else if (declineRect.contains(e.getPoint())) {
+                        onDecline.run();
+                    }
+                }
+            });
+        }
+
+        @Override
+        protected void paintComponent(Graphics g0) {
+            Graphics2D g = (Graphics2D) g0.create();
+            aa(g);
+            int w = getWidth();
+            int cy = getHeight() / 2;
+            if (hover) {
+                g.setColor(new Color(0x14220F));
+                g.fill(new RoundRectangle2D.Double(6, 2, w - 12, getHeight() - 4, 14, 14));
+            }
+            BufferedImage sk = friendSkins.get(nick);
+            drawAvatar(g, sk == NO_SKIN ? null : sk, 16, cy - 17, 34, null, new Color(0x0D1318));
+            int tx = 66;
+            int right = 14 + 28 + 6 + 74 + 6;
+            g.setFont(body(Font.BOLD, 16));
+            g.setColor(TEXT);
+            g.drawString(fit(g, nick, w - tx - right), tx, cy - 3);
+            g.setFont(body(Font.PLAIN, 12));
+            g.setColor(ACCENT_HI);
+            g.drawString("Zaproszenie", tx, cy + 15);
+
+            declineRect.setBounds(w - 14 - 28, cy - 14, 28, 28);
+            acceptRect.setBounds(declineRect.x - 6 - 74, cy - 14, 74, 28);
+            g.setPaint(new GradientPaint(0, acceptRect.y, ACCENT_HI, 0, acceptRect.y + 28, ACCENT));
+            g.fill(new RoundRectangle2D.Double(acceptRect.x, acceptRect.y, 74, 28, 14, 14));
+            g.setFont(body(Font.BOLD, 13));
+            g.setColor(ON_ACCENT);
+            g.drawString("Akceptuj", acceptRect.x + (74 - g.getFontMetrics().stringWidth("Akceptuj")) / 2, mid(g, cy));
+            g.setColor(alpha(Color.WHITE, 16));
+            g.fill(new Ellipse2D.Double(declineRect.x, declineRect.y, 28, 28));
+            g.setColor(MUTED);
+            g.setStroke(new BasicStroke(1.5f, BasicStroke.CAP_ROUND, BasicStroke.JOIN_ROUND));
+            int cx = declineRect.x + 14;
+            g.drawLine(cx - 4, cy - 4, cx + 4, cy + 4);
+            g.drawLine(cx - 4, cy + 4, cx + 4, cy - 4);
+            setToolTipText("Odrzuć");
+            g.dispose();
+        }
+    }
+
+    /** Wysłane zaproszenie, na które druga osoba jeszcze nie odpowiedziała. */
+    private final class OutgoingRow extends Clickable {
+        private final String nick;
+        private final Rectangle cancelRect = new Rectangle();
+
+        OutgoingRow(String nick, Runnable onCancel) {
+            super(null);
+            this.nick = nick;
+            setCursor(Cursor.getDefaultCursor());
+            setPreferredSize(new Dimension(306, 58));
+            setMaximumSize(new Dimension(Integer.MAX_VALUE, 58));
+            setAlignmentX(Component.LEFT_ALIGNMENT);
+            addMouseListener(new MouseAdapter() {
+                @Override
+                public void mouseReleased(MouseEvent e) {
+                    if (cancelRect.contains(e.getPoint())) {
+                        onCancel.run();
+                    }
+                }
+            });
+        }
+
+        @Override
+        protected void paintComponent(Graphics g0) {
+            Graphics2D g = (Graphics2D) g0.create();
+            aa(g);
+            int w = getWidth();
+            int cy = getHeight() / 2;
+            if (hover) {
+                g.setColor(new Color(0x14220F));
+                g.fill(new RoundRectangle2D.Double(6, 2, w - 12, getHeight() - 4, 14, 14));
+            }
+            BufferedImage sk = friendSkins.get(nick);
+            drawAvatar(g, sk == NO_SKIN ? null : sk, 16, cy - 17, 34, "offline", new Color(0x0D1318));
+            int tx = 66;
+            int right = 14 + 62 + 8;
+            g.setFont(body(Font.BOLD, 16));
+            g.setColor(new Color(0x9AA6B2));
+            g.drawString(fit(g, nick, w - tx - right), tx, cy - 3);
+            g.setFont(body(Font.PLAIN, 12));
+            g.setColor(MUTED);
+            g.drawString(fit(g, "Czeka na potwierdzenie", w - tx - right), tx, cy + 15);
+            cancelRect.setBounds(w - 14 - 62, cy - 14, 62, 28);
+            g.setColor(alpha(Color.WHITE, 16));
+            g.fill(new RoundRectangle2D.Double(cancelRect.x, cancelRect.y, 62, 28, 14, 14));
+            g.setFont(body(Font.BOLD, 13));
+            g.setColor(TEXT);
+            g.drawString("Anuluj", cancelRect.x + (62 - g.getFontMetrics().stringWidth("Anuluj")) / 2, mid(g, cy));
             g.dispose();
         }
     }
@@ -3172,6 +3696,7 @@ public class BushLaunch {
         nick = msAccount != null ? msAccount.name() : "";
         skin = null;
         loadSkinAsync();
+        startSocial();
         repaintSelf();
         if (frame != null) {
             frame.repaint();
@@ -3970,10 +4495,16 @@ public class BushLaunch {
                     throw new IOException("Brak konfiguracji logowania Microsoft. Właściciel musi wbudować Client ID podczas budowania launchera.");
                 }
                 appendLog("Odświeżanie sesji Microsoft...");
-                MicrosoftAuth.Login l = MicrosoftAuth.refresh(cid, acc, this::appendLog);
-                MicrosoftAuth.Account fresh = new MicrosoftAuth.Account(l.name(), l.uuid(), l.refreshToken());
-                MicrosoftAuth.saveAccount(baseDir, fresh);
-                msAccount = fresh;
+                MicrosoftAuth.Login l;
+                synchronized (authLock) {
+                    MicrosoftAuth.Account cur = msAccount != null ? msAccount : acc;
+                    l = MicrosoftAuth.refresh(cid, cur, this::appendLog);
+                    MicrosoftAuth.Account fresh = new MicrosoftAuth.Account(l.name(), l.uuid(), l.refreshToken());
+                    MicrosoftAuth.saveAccount(baseDir, fresh);
+                    msAccount = fresh;
+                    socialCredsCache = new Social.Creds(l.name(), l.uuid(), l.mcToken());
+                    socialCredsAt = System.currentTimeMillis();
+                }
                 session = new GameInstaller.Session(l.name(), l.uuid(), l.mcToken(), "msa");
             }
 
@@ -3995,8 +4526,10 @@ public class BushLaunch {
             appendLog("Uruchamianie Minecrafta " + version.id() + " jako " + session.name() + "...");
             SwingUtilities.invokeLater(() -> {
                 gameRunning = true;
+                gameInfo = "Minecraft " + version.id();
                 hero.repaint();
                 repaintSelf();
+                socialPingNow();
             });
 
             long started = System.currentTimeMillis();
@@ -4020,7 +4553,9 @@ public class BushLaunch {
         } finally {
             SwingUtilities.invokeLater(() -> {
                 gameRunning = false;
+                gameInfo = "";
                 repaintSelf();
+                socialPingNow();
                 setBusy(false);
                 refreshStats();
                 refreshRecent();

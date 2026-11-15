@@ -6,7 +6,7 @@ Launcher Minecraft by BushStar (Java, Swing).
 (klient, biblioteki, assets) z serwerów Mojang i ją uruchamia.
 
 - **nowy wygląd (0.8.0)**: zielony panel - menu boczne (Graj, Wersje, Mody, Aktualności, Ustawienia) z listą ostatnio granych wersji, nocna scena z plakietką JAVA EDITION, karty aktualności oraz dolny pasek z wyborem wersji, RAM-em, postępem i przyciskiem GRAJ; konsola jest w Ustawieniach
-- **znajomi**: lista lokalna (kliknij „znajomych” w prawym górnym rogu sceny, dodaj nicki); skiny pobierane z serwerów Mojang
+- **znajomi**: kliknij „znajomych” w prawym górnym rogu sceny. Z serwerem znajomych (patrz niżej) zaproszenia **musi potwierdzić druga osoba w swoim launcherze**, a przy każdym graczu widać głowę z kropką statusu (zielona = w grze, niebieska = online, szara = offline). Bez serwera lista jest lokalna. Skiny pobierane z serwerów Mojang
 - **profile**: tworzysz własne profile (nazwa + wersja gry), zmieniasz im wersję, duplikujesz i usuwasz; zapisują się w `config.properties`
 - lista wszystkich wersji z oficjalnego manifestu Mojang (domyślnie tylko release, snapshoty po zaznaczeniu)
 - logowanie kontem **Microsoft** (tylko konta premium, w przeglądarce z wyborem konta, sesja zapamiętana); trybu offline już nie ma
@@ -101,3 +101,14 @@ Wynik: `dist/BushLaunch-Setup.exe`. Na GitHubie robi to samo `.github/workflows/
 - `Json.java` - mały parser JSON
 - `installer/` - skrypt instalatora (`BushLaunch.iss`), ikona i grafiki kreatora
 - `.github/workflows/build.yml` - build na Windowsie i publikacja w Releases
+
+## Znajomi (serwer znajomych)
+
+Zaproszenia z potwierdzeniem i statusy znajomych działają przez mały serwer z folderu `friends-server`
+(Node.js, bez zależności - patrz jego `README.md`). Tożsamość gracza potwierdza serwer sesji Mojang,
+więc token gry nigdy nie trafia na ten serwer.
+
+Adres serwera launcher bierze (od najważniejszego): z `config.properties` (`socialUrl=https://...`),
+z pliku `social.properties` wbudowanego w jar albo - gdy brak - działa w trybie lokalnym.
+W GitHub Actions plik tworzy krok **Adres serwera znajomych** ze zmiennej repozytorium **FRIENDS_URL**
+(Settings > Secrets and variables > Actions > Variables).
