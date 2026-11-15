@@ -4031,19 +4031,6 @@ public class BushLaunch {
             account.repaint();
         };
         build[0].run();
-                }));
-            } else {
-                account.add(htmlLabel("Do gry potrzebne jest konto Microsoft z Minecraftem Java Edition.",
-                        MUTED, 13, Font.PLAIN));
-                account.add(javax.swing.Box.createVerticalStrut(12));
-                account.add(wideButton("Zaloguj przez Microsoft", true, startLogin));
-            }
-            account.add(javax.swing.Box.createVerticalStrut(10));
-            account.add(err);
-            account.revalidate();
-            account.repaint();
-        };
-        build[0].run();
         d.setVisible(true);
     }
 
